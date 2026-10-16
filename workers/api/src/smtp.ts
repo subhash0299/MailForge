@@ -1,4 +1,6 @@
-import { connect, type Socket } from "cloudflare:sockets";
+import { connect } from "cloudflare:sockets";
+
+type SmtpSocket = ReturnType<typeof connect>;
 
 export interface SmtpEnv {
   SMTP_HOST?: string;
@@ -101,7 +103,7 @@ class SmtpChannel {
   private writer: WritableStreamDefaultWriter<Uint8Array>;
   private pending = "";
 
-  constructor(private socket: Socket) {
+  constructor(private socket: SmtpSocket) {
     this.reader = socket.readable.getReader();
     this.writer = socket.writable.getWriter();
   }
@@ -189,7 +191,7 @@ export async function sendSmtpEmail(env: SmtpEnv, message: SmtpMessage): Promise
     throw new SmtpDeliveryError('SMTP_SECURITY must be "tls" or "starttls".', 0, false);
   }
 
-  let socket: Socket | null = null;
+  let socket: SmtpSocket | null = null;
   let channel: SmtpChannel | null = null;
   try {
     socket = connect({ hostname: host, port }, {
