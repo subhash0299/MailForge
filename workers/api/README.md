@@ -54,6 +54,20 @@ npx wrangler deploy
 
 Adding a secret with `wrangler secret put` itself creates and deploys a new Worker version. You can check secret names (not their values) with `npx wrangler secret list`.
 
+## SMTP connection test
+
+The token-protected `POST /internal/smtp-test` endpoint sends one real test email using the configured SMTP credentials. Enable it by setting the encrypted `SMTP_TEST_TOKEN` secret to a long random value. The endpoint uses `SMTP_USERNAME` as the sender address, which should match the Maileroo SMTP account's sender alias. Send only to an address you control.
+
+Example request:
+
+```powershell
+$headers = @{ Authorization = "Bearer $env:SMTP_TEST_TOKEN"; "Content-Type" = "application/json" }
+$body = @{ to = "you@example.com"; subject = "MailForge SMTP test" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "https://mailforge-api.mailforge.workers.dev/internal/smtp-test" -Headers $headers -Body $body
+```
+
+Keep the token secret. A successful response means the configured SMTP server accepted the message, not that it reached the inbox.
+
 ## Current API
 
 - `GET /health`: health check.
