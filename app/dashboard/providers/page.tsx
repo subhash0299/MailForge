@@ -27,9 +27,13 @@ export default function ProvidersPage() {
   async function save(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(''); setNotice('');
     try {
-      const r = await apiRequest<{ configured: boolean }>('/v1/smtp-config', { method: 'PUT', body: JSON.stringify({ host, port: Number(port), security, username, password, senderEmail }) });
+      const r = await apiRequest<{ configured: boolean; testEmail: { status: 'accepted' | 'failed'; message: string } }>('/v1/smtp-config', { method: 'PUT', body: JSON.stringify({ host, port: Number(port), security, username, password, senderEmail }) });
       setConfigured(r.configured); setPassword('');
-      setNotice('Settings saved. The connection will be checked when your next email is sent. The saved credential is never displayed again.');
+      if (r.testEmail.status === 'accepted') {
+        setNotice(r.testEmail.message);
+      } else {
+        setError(r.testEmail.message);
+      }
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not save settings.'); } finally { setBusy(false); }
   }
   async function remove() {
@@ -56,6 +60,6 @@ export default function ProvidersPage() {
         <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy}>{busy?'Saving…':'Save SMTP settings'}</Button>{configured && <Button type="button" variant="outline" disabled={busy} onClick={()=>void remove()}>Remove provider</Button>}</div>
       </form>}
     </Card>
-    <Card className="mt-5 p-5"><h2 className="text-sm font-semibold">Before sending</h2><ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground"><li>Use port 465 with TLS or port 587 with STARTTLS. Port 25 is blocked by this service.</li><li>Your provider must allow connections from Cloudflare Workers and authorize the sender address.</li><li>Saving settings does not send a test message; connection validation happens on the first actual send.</li><li>SMTP acceptance does not guarantee inbox delivery.</li></ul></Card>
+    <Card className="mt-5 p-5"><h2 className="text-sm font-semibold">Before sending</h2><ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground"><li>Use port 465 with TLS or port 587 with STARTTLS. Port 25 is blocked by this service.</li><li>Your provider must allow connections from Cloudflare Workers and authorize the sender address.</li><li>Saving settings sends “Test email from MailForge” to the email address you use to sign in. Check your inbox and spam folder.</li><li>SMTP acceptance does not guarantee inbox delivery.</li></ul></Card>
   </div>;
 }
