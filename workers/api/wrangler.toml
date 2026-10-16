@@ -1,0 +1,25 @@
+name = "mailforge-api"
+main = "src/index.ts"
+compatibility_date = "2026-10-16"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mailforge"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[[queues.producers]]
+binding = "MAIL_QUEUE"
+queue = "mailforge-delivery"
+
+[[queues.consumers]]
+queue = "mailforge-delivery"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+dead_letter_queue = "mailforge-delivery-dlq"
+
+[vars]
+# Set APP_ORIGIN to your deployed dashboard origin before production.
+APP_ORIGIN = "http://localhost:3000"
