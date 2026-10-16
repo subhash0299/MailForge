@@ -31,8 +31,8 @@ export default function SignupPage() {
     <main className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
       <section className="w-full max-w-md rounded-2xl border border-border bg-card p-8 shadow-xl">
         <Link href="/" className="text-sm font-semibold tracking-wide text-primary">MAILFORGE</Link>
-        <h1 className="mt-7 text-2xl font-semibold text-foreground">Create your workspace</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Set up your account to manage API keys and email activity.</p>
+        <h1 className="mt-7 text-2xl font-semibold text-foreground">Join the MailForge private beta</h1>
+        <p className="mt-2 text-sm text-muted-foreground">MailForge is in private beta. Use the email address that received your invitation to create a workspace.</p>
         <form onSubmit={submit} className="mt-7 space-y-4">
           <label className="block text-sm font-medium text-foreground">Workspace name
             <input required maxLength={80} value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2.5 outline-none focus:border-primary" />
@@ -47,7 +47,7 @@ export default function SignupPage() {
           {error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
           <button disabled={busy} className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground disabled:opacity-60">{busy ? 'Creating workspace…' : 'Create account'}</button>
         </form>
-        <p className="mt-6 text-center text-sm text-muted-foreground">Already registered? <Link className="font-medium text-primary hover:underline" href="/login">Sign in</Link></p>
+        <p className="mt-6 text-center text-sm text-muted-foreground">Already have an account? <Link className="font-medium text-primary hover:underline" href="/login">Sign in</Link></p>
       </section>
     </main>
   );
