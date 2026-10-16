@@ -10,6 +10,7 @@ export interface Env {
   SMTP_USERNAME?: string;
   SMTP_PASSWORD?: string;
   SMTP_TEST_TOKEN?: string;
+  REGISTRATION_ENABLED?: string;
 }
 
 type ApiKeyRow = {
@@ -434,6 +435,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
   const method = request.method;
 
   if (method === "POST" && path === "/v1/auth/register") {
+    if (env.REGISTRATION_ENABLED !== "true") return json({ error: { code: "registration_disabled", message: "Account registration is currently closed. Enable REGISTRATION_ENABLED temporarily for initial setup." } }, 403);
     let body: { email?: unknown; password?: unknown; workspaceName?: unknown };
     try { body = await request.json() as typeof body; } catch {
       return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
