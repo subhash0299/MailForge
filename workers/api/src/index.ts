@@ -538,7 +538,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     return json({ data: { id, name, type, prefix: secret.slice(0, 12), createdAt: now, lastUsedAt: null, revoked: false }, secret }, 201, { "cache-control": "no-store" });
   }
 
-  const revokeMatch = path.match(/^\\/v1\\/api-keys\\/([a-f0-9-]+)$/i);
+  const revokeMatch = path.match(/^\/v1\/api-keys\/([a-f0-9-]+)$/i);
   if (method === "DELETE" && revokeMatch) {
     const result = await env.DB.prepare("UPDATE api_keys SET revoked = 1, revoked_at = ? WHERE id = ? AND workspace_id = ? AND revoked = 0")
       .bind(new Date().toISOString(), revokeMatch[1], session.workspace_id).run();
@@ -565,7 +565,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     return json({ data: result.results ?? [], total: count?.total ?? 0, limit, offset }, 200, { "cache-control": "no-store" });
   }
 
-  const emailDetailMatch = path.match(/^\\/v1\\/emails\\/([a-f0-9-]+)$/i);
+  const emailDetailMatch = path.match(/^\/v1\/emails\/([a-f0-9-]+)$/i);
   if (method === "GET" && emailDetailMatch) {
     const email = await env.DB.prepare(
       "SELECT * FROM email_logs WHERE id = ? AND workspace_id = ? LIMIT 1",
@@ -604,7 +604,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     return json({ data: { id, email, reason, domain: emailDomain(email), detail, created_at: now } }, 201);
   }
 
-  const suppressionMatch = path.match(/^\\/v1\\/suppressions\\/([a-f0-9-]+)$/i);
+  const suppressionMatch = path.match(/^\/v1\/suppressions\/([a-f0-9-]+)$/i);
   if (method === "DELETE" && suppressionMatch) {
     const result = await env.DB.prepare("DELETE FROM suppressions WHERE id = ? AND workspace_id = ?")
       .bind(suppressionMatch[1], session.workspace_id).run();
@@ -617,8 +617,8 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     try { body = await request.json() as typeof body; } catch {
       return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
     }
-    const domain = typeof body.domain === "string" ? body.domain.trim().toLowerCase().replace(/\\.$/, "") : "";
-    const domainPattern = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$/;
+    const domain = typeof body.domain === "string" ? body.domain.trim().toLowerCase().replace(/\.$/, "") : "";
+    const domainPattern = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
     if (!domainPattern.test(domain)) return json({ error: { code: "invalid_domain", message: "Enter a valid domain name, such as example.com." } }, 400);
     const existing = await env.DB.prepare("SELECT id FROM sending_domains WHERE workspace_id = ? AND domain = ? COLLATE NOCASE LIMIT 1")
       .bind(session.workspace_id, domain).first<{ id: string }>();
