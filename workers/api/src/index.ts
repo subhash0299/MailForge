@@ -507,10 +507,69 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
 
   const session = await getDashboardSession(request, env);
   if (!session) {
-    if (path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path.startsWith("/v1/domains") || path.startsWith("/v1/suppressions")) {
+    if (path === "/v1/settings" || path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path.startsWith("/v1/domains") || path.startsWith("/v1/suppressions")) {
       return json({ error: { code: "unauthorized", message: "Sign in to access workspace data." } }, 401, { "cache-control": "no-store" });
     }
     return null;
+  }
+
+  if (method === "GET" && path === "/v1/settings") {
+    const [profile, workspace, saved] = await Promise.all([
+      env.DB.prepare("SELECT full_name, email FROM users WHERE id = ? LIMIT 1").bind(session.user_id).first<{ full_name: string | null; email: string }>(),
+      env.DB.prepare("SELECT name, plan FROM workspaces WHERE id = ? LIMIT 1").bind(session.workspace_id).first<{ name: string; plan: string }>(),
+      env.DB.prepare("SELECT timezone, date_format, default_sender_email, default_sender_name, notifications_json FROM workspace_settings WHERE workspace_id = ? LIMIT 1").bind(session.workspace_id).first<{ timezone: string; date_format: string; default_sender_email: string; default_sender_name: string; notifications_json: string }>(),
+    ]);
+    if (!profile || !workspace) return json({ error: { code: "not_found", message: "Account or workspace not found." } }, 404);
+    let notifications = { emailBounces: true, domainExpiring: true, quotaThreshold: true, weeklyDigest: false, securityAlerts: true };
+    try { if (saved?.notifications_json) notifications = { ...notifications, ...JSON.parse(saved.notifications_json) }; } catch { /* use defaults for malformed legacy data */ }
+    return json({
+      profile: { fullName: profile.full_name ?? "", email: profile.email },
+      workspace: { name: workspace.name, plan: workspace.plan },
+      settings: {
+        timezone: saved?.timezone ?? "Asia/Kolkata",
+        dateFormat: saved?.date_format ?? "dmy",
+        defaultSenderEmail: saved?.default_sender_email ?? "",
+        defaultSenderName: saved?.default_sender_name ?? "MailForge",
+        notifications,
+      },
+    }, 200, { "cache-control": "no-store" });
+  }
+
+  if (method === "PATCH" && path === "/v1/settings") {
+    let body: { fullName?: unknown; workspaceName?: unknown; timezone?: unknown; dateFormat?: unknown; defaultSenderEmail?: unknown; defaultSenderName?: unknown; notifications?: unknown };
+    try { body = await request.json() as typeof body; } catch {
+      return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
+    }
+    const fullName = typeof body.fullName === "string" ? body.fullName.trim().slice(0, 100) : "";
+    const workspaceName = typeof body.workspaceName === "string" ? body.workspaceName.trim().slice(0, 80) : "";
+    const timezone = typeof body.timezone === "string" ? body.timezone : "Asia/Kolkata";
+    const dateFormat = body.dateFormat === "mdy" || body.dateFormat === "dmy" || body.dateFormat === "ymd" ? body.dateFormat : "dmy";
+    const defaultSenderEmail = typeof body.defaultSenderEmail === "string" ? normalizeEmail(body.defaultSenderEmail) : "";
+    const defaultSenderName = typeof body.defaultSenderName === "string" ? body.defaultSenderName.trim().slice(0, 100) : "MailForge";
+    const allowedTimezones = new Set(["UTC", "Asia/Kolkata", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Asia/Tokyo", "Australia/Sydney"]);
+    if (!workspaceName) return json({ error: { code: "invalid_workspace_name", message: "Workspace name is required." } }, 400);
+    if (!allowedTimezones.has(timezone)) return json({ error: { code: "invalid_timezone", message: "Choose a supported time zone." } }, 400);
+    if (defaultSenderEmail && !validEmail(defaultSenderEmail)) return json({ error: { code: "invalid_sender_email", message: "Enter a valid default sender email address." } }, 400);
+    const rawNotifications = body.notifications && typeof body.notifications === "object" ? body.notifications as Record<string, unknown> : {};
+    const notifications = {
+      emailBounces: rawNotifications.emailBounces === true,
+      domainExpiring: rawNotifications.domainExpiring === true,
+      quotaThreshold: rawNotifications.quotaThreshold === true,
+      weeklyDigest: rawNotifications.weeklyDigest === true,
+      securityAlerts: rawNotifications.securityAlerts === true,
+    };
+    const now = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE users SET full_name = ? WHERE id = ?").bind(fullName || null, session.user_id),
+      env.DB.prepare("UPDATE workspaces SET name = ? WHERE id = ? AND owner_id = ?").bind(workspaceName, session.workspace_id, session.user_id),
+      env.DB.prepare("INSERT INTO workspace_settings (workspace_id, timezone, date_format, default_sender_email, default_sender_name, notifications_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(workspace_id) DO UPDATE SET timezone = excluded.timezone, date_format = excluded.date_format, default_sender_email = excluded.default_sender_email, default_sender_name = excluded.default_sender_name, notifications_json = excluded.notifications_json, updated_at = excluded.updated_at")
+        .bind(session.workspace_id, timezone, dateFormat, defaultSenderEmail, defaultSenderName || "MailForge", JSON.stringify(notifications), now),
+    ]);
+    return json({
+      profile: { fullName, email: session.email },
+      workspace: { name: workspaceName, plan: "free" },
+      settings: { timezone, dateFormat, defaultSenderEmail, defaultSenderName: defaultSenderName || "MailForge", notifications },
+    }, 200, { "cache-control": "no-store" });
   }
 
   if (method === "GET" && path === "/v1/api-keys") {
