@@ -11,6 +11,7 @@ export interface Env {
   SMTP_PASSWORD?: string;
   SMTP_TEST_TOKEN?: string;
   REGISTRATION_ENABLED?: string;
+  REGISTRATION_INVITED_EMAILS?: string;
 }
 
 type ApiKeyRow = {
@@ -435,7 +436,6 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
   const method = request.method;
 
   if (method === "POST" && path === "/v1/auth/register") {
-    if (env.REGISTRATION_ENABLED !== "true") return json({ error: { code: "registration_disabled", message: "Account registration is currently closed. Enable REGISTRATION_ENABLED temporarily for initial setup." } }, 403);
     let body: { email?: unknown; password?: unknown; workspaceName?: unknown };
     try { body = await request.json() as typeof body; } catch {
       return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
@@ -445,6 +445,17 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     const workspaceName = typeof body.workspaceName === "string" && body.workspaceName.trim()
       ? body.workspaceName.trim().slice(0, 80) : "My Workspace";
     if (!validEmail(email)) return json({ error: { code: "invalid_email", message: "Enter a valid email address." } }, 400);
+
+    // Public registration stays closed by default. When it is not explicitly
+    // enabled, only exact email addresses in the operator-managed allowlist may register.
+    const invitedEmails = (env.REGISTRATION_INVITED_EMAILS ?? "")
+      .split(",")
+      .map((value) => normalizeEmail(value))
+      .filter(Boolean);
+    if (env.REGISTRATION_ENABLED !== "true" && !invitedEmails.includes(email)) {
+      return json({ error: { code: "invitation_required", message: "MailForge is in private beta. Registration is limited to invited email addresses." } }, 403);
+    }
+
     if (password.length < 12 || password.length > 200) {
       return json({ error: { code: "weak_password", message: "Password must be between 12 and 200 characters." } }, 400);
     }
