@@ -47,7 +47,6 @@ const defaultNotifications: Notifications = {
 };
 
 export default function SettingsPage() {
-  const [data, setData] = useState<SettingsPayload | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
@@ -67,7 +66,6 @@ export default function SettingsPage() {
     apiRequest<SettingsPayload>('/v1/settings')
       .then((result) => {
         if (!active) return;
-        setData(result);
         setName(result.profile.fullName);
         setEmail(result.profile.email);
         setWorkspaceName(result.workspace.name);
@@ -102,7 +100,6 @@ export default function SettingsPage() {
           notifications,
         }),
       });
-      setData(result);
       setName(result.profile.fullName);
       setWorkspaceName(result.workspace.name);
       setPlan(result.workspace.plan);
