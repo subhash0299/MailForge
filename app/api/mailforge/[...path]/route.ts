@@ -2,9 +2,10 @@ import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const API_BASE = (process.env.MAILFORGE_API_URL || "https://mailforge-api.mailforge.workers.dev").replace(/\/$/, "");
+const API_BASE = process.env.MAILFORGE_API_URL?.replace(/\/$/, "");
 
 async function proxy(request: NextRequest, context: { params: { path: string[] } }) {
+  if (!API_BASE) return Response.json({ error: { code: "api_not_configured", message: "Set MAILFORGE_API_URL in the Vercel environment before using the dashboard." } }, { status: 503 });
   const path = context.params.path.map((part) => encodeURIComponent(part)).join("/");
   const target = new URL(`/${path}`, API_BASE);
   target.search = request.nextUrl.search;
