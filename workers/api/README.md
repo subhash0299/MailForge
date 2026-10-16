@@ -104,6 +104,32 @@ The dashboard uses a same-origin Next.js proxy at `/api/mailforge/*`; the proxy 
 
 The overview, API-key, and email-activity dashboard pages now use live API data. Domain management, suppressions, webhooks, and some usage/settings screens still need live integration. Account email verification, password reset, strong abuse/rate controls, and customer-managed DNS verification are not implemented yet; do not open public self-registration for unrestricted production traffic until these controls are added.
 
+## First end-to-end send
+
+1. From `workers/api`, run `npm install` and `npx wrangler deploy`. Existing SMTP secrets and D1/Queue resources remain configured in your Cloudflare account.
+2. Temporarily run `npx wrangler secret put REGISTRATION_ENABLED` and enter `true`.
+3. Open the deployed dashboard's `/signup` page, create your owner account, and generate a **test** API key from Dashboard → API Keys.
+4. Immediately run `npx wrangler secret put REGISTRATION_ENABLED` again and enter `false`. This closes public registration while keeping sign-in available.
+5. Send a test using the generated key and the exact configured provider sender:
+
+```powershell
+$apiKey = Read-Host "Paste your MailForge test API key"
+$headers = @{
+  Authorization = "Bearer $apiKey"
+  "Content-Type" = "application/json"
+  "Idempotency-Key" = [guid]::NewGuid().ToString()
+}
+$body = @{
+  from = "noreply@mailforge.maileroo.app"
+  to = "you@example.com"
+  subject = "MailForge end-to-end test"
+  text = "This message was sent through the MailForge API and delivery queue."
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "https://mailforge-api.mailforge.workers.dev/v1/emails" -Headers $headers -Body $body
+```
+
+A `202` response with `status: queued` means MailForge queued the message. Check Dashboard → Email Activity for the queue and SMTP attempt statuses, then check the recipient inbox. SMTP `250` means accepted by Maileroo, not guaranteed inbox delivery.
+
 ## SMTP delivery behavior
 
 The queue consumer connects to the configured SMTP submission host, negotiates TLS, authenticates using SMTP AUTH PLAIN, submits the message, and records the SMTP response and attempt in D1. A successful SMTP `250` after DATA means the SMTP server accepted the message; it does **not** guarantee final mailbox delivery. Provider-specific bounce, complaint, and delivery webhooks are not implemented yet.
