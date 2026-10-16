@@ -240,9 +240,9 @@ async function consumeMailQueue(batch: MessageBatch<{ emailLogId: string }>, env
       const nextAttempt = (attemptNumber?.count ?? 0) + 1;
       await env.DB.batch([
         env.DB.prepare("INSERT INTO delivery_attempts (id, email_log_id, attempt_number, status, response_code, response_text, duration_ms, created_at) VALUES (?, ?, ?, 'accepted', ?, ?, ?, ?)")
-          .bind(crypto.randomUUID(), email.id, nextAttempt, result.code, result.response.slice(0, 2000), Date.now() - started, finished),
+          .bind(crypto.randomUUID(), email.id, nextAttempt, result.code, result.text.slice(0, 2000), Date.now() - started, finished),
         env.DB.prepare("UPDATE email_logs SET status = 'accepted', smtp_code = ?, smtp_response = ?, error_details = NULL, last_updated = ? WHERE id = ?")
-          .bind(result.code, result.response.slice(0, 2000), finished, email.id),
+          .bind(result.code, result.text.slice(0, 2000), finished, email.id),
         env.DB.prepare("INSERT INTO email_events (id, email_log_id, event_type, description, created_at) VALUES (?, ?, 'email.accepted', 'Accepted by configured SMTP server', ?)")
           .bind(crypto.randomUUID(), email.id, finished),
       ]);
