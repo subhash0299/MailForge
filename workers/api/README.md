@@ -34,6 +34,7 @@ npx wrangler secret put SMTP_PORT
 npx wrangler secret put SMTP_SECURITY
 npx wrangler secret put SMTP_USERNAME
 npx wrangler secret put SMTP_PASSWORD
+npx wrangler secret put REGISTRATION_ENABLED
 ```
 
 Use these values for a typical submission server:
@@ -88,6 +89,8 @@ Example body:
 The sender domain must be marked `verified` in D1, and the recipient must not be suppressed. For initial Maileroo testing only, the exact address configured in `SMTP_USERNAME` is also allowed as the sender. Do not treat this provider sender exception as a multi-tenant production domain-verification system.
 
 ## Dashboard authentication and APIs
+
+Account registration is disabled unless the encrypted Worker secret `REGISTRATION_ENABLED` is set to `true`. Enable it only while creating the first owner account, then set it back to `false` (or remove the secret) before exposing the dashboard publicly. Sign-in remains available when registration is disabled.
 
 The dashboard uses a same-origin Next.js proxy at `/api/mailforge/*`; the proxy forwards to `MAILFORGE_API_URL` (must be set to the intended Worker URL). Set `MAILFORGE_API_URL` in Vercel if you deploy the Worker at a different URL.
 
