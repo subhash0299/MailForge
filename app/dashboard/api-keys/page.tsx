@@ -1,324 +1,132 @@
 'use client';
 
-import { useState } from 'react';
-import {
-  KeyRound,
-  Plus,
-  Copy,
-  Check,
-  Eye,
-  EyeOff,
-  AlertTriangle,
-  Trash2,
-  Clock,
-} from 'lucide-react';
-
+import { FormEvent, useEffect, useState } from 'react';
+import { Check, Copy, KeyRound, Plus, ShieldAlert, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/dashboard/page-header';
-import { MockDataBanner, EmptyState } from '@/components/dashboard/feedback';
-import { KeyTypeBadge } from '@/components/dashboard/status-badge';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { mockApiKeys } from '@/lib/mock-data';
+import { KeyTypeBadge } from '@/components/dashboard/status-badge';
 import { formatDate, formatRelativeTime } from '@/lib/format';
+import { apiRequest } from '@/lib/api';
 import type { ApiKey, KeyType } from '@/lib/types';
 
-function generateKey(type: KeyType): string {
-  const prefix = type === 'live' ? 'mf_live_' : 'mf_test_';
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let body = '';
-  for (let i = 0; i < 40; i++) body += chars[Math.floor(Math.random() * chars.length)];
-  return prefix + body;
-}
+type KeyListResponse = { data: Array<{ id: string; name: string; type: KeyType; prefix: string; createdAt: string; lastUsedAt: string | null; revoked: boolean }> };
+type CreateResponse = { data: KeyListResponse['data'][number]; secret: string };
 
 export default function ApiKeysPage() {
-  const [keys, setKeys] = useState<ApiKey[]>(mockApiKeys);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [newKeyName, setNewKeyName] = useState('');
-  const [newKeyType, setNewKeyType] = useState<KeyType>('test');
-  const [newKeyRestrictions, setNewKeyRestrictions] = useState('');
-  const [createdKey, setCreatedKey] = useState<string | null>(null);
-  const [showKey, setShowKey] = useState(true);
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [name, setName] = useState('');
+  const [type, setType] = useState<KeyType>('test');
+  const [secret, setSecret] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
 
-  const activeKeys = keys.filter((k) => !k.revoked);
-  const revokedKeys = keys.filter((k) => k.revoked);
+  async function loadKeys() {
+    try {
+      const result = await apiRequest<KeyListResponse>('/v1/api-keys');
+      setKeys(result.data.map((key) => ({ id: key.id, name: key.name, type: key.type, prefix: key.prefix, createdAt: key.createdAt, lastUsedAt: key.lastUsedAt, revoked: key.revoked })));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load API keys.');
+    }
+  }
 
-  const handleCreate = () => {
-    if (!newKeyName.trim()) return;
-    const secret = generateKey(newKeyType);
-    const key: ApiKey = {
-      id: `key_${Date.now()}`,
-      name: newKeyName.trim(),
-      type: newKeyType,
-      prefix: newKeyType === 'live' ? 'mf_live_' : 'mf_test_',
-      createdAt: new Date().toISOString(),
-      lastUsedAt: null,
-      revoked: false,
-      restrictions: newKeyRestrictions.trim() || undefined,
-    };
-    setKeys([key, ...keys]);
-    setCreatedKey(secret);
-    setNewKeyName('');
-    setNewKeyRestrictions('');
-    setNewKeyType('test');
-    setShowKey(true);
-  };
+  useEffect(() => { void loadKeys(); }, []);
 
-  const handleRevoke = () => {
-    if (!revokeTarget) return;
-    setKeys((prev) => prev.map((k) => k.id === revokeTarget.id ? { ...k, revoked: true } : k));
-    setRevokeTarget(null);
-  };
+  async function createKey(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await apiRequest<CreateResponse>('/v1/api-keys', { method: 'POST', body: JSON.stringify({ name: name.trim(), type }) });
+      setSecret(result.secret);
+      setName('');
+      await loadKeys();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create API key.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
-  const copyKey = (key: string) => {
-    navigator.clipboard.writeText(key);
+  async function revokeKey(key: ApiKey) {
+    if (!window.confirm(`Revoke "${key.name}"? Applications using this key will stop authenticating.`)) return;
+    setError('');
+    try {
+      await apiRequest(`/v1/api-keys/${key.id}`, { method: 'DELETE' });
+      await loadKeys();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not revoke API key.');
+    }
+  }
+
+  async function copySecret() {
+    await navigator.clipboard.writeText(secret);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const closeCreatedDialog = () => {
-    setCreatedKey(null);
-    setCreateOpen(false);
-  };
+    window.setTimeout(() => setCopied(false), 1800);
+  }
 
   return (
     <div>
-      <PageHeader
-        title="API Keys"
-        description="Manage your API keys for authenticating email API requests. Secrets are shown only once at creation."
-        action={
-          <Button onClick={() => setCreateOpen(true)} size="sm">
-            <Plus className="h-4 w-4" />
-            Generate Key
-          </Button>
-        }
-      />
-      <MockDataBanner />
-
-      <div className="mb-4 flex items-center gap-2.5 rounded-lg border border-accent/20 bg-accent/5 p-3">
-        <KeyRound className="h-4 w-4 shrink-0 text-accent" />
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          API keys are hashed before storage. The full secret is displayed only once after creation — store it securely. You will not be able to see it again.
-        </p>
+      <PageHeader title="API Keys" description="Create and revoke keys for applications that send through MailForge." />
+      <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+        <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+        <p className="text-sm text-muted-foreground">Keys are stored as SHA-256 hashes. The full secret is shown only once when created. Keep it in a secret manager and never ship live keys in browser code.</p>
       </div>
 
-      {activeKeys.length === 0 && revokedKeys.length === 0 ? (
-        <EmptyState
-          icon={KeyRound}
-          title="No API keys yet"
-          description="Generate your first API key to start sending emails through the MailForge API."
-          action={<Button onClick={() => setCreateOpen(true)} size="sm"><Plus className="h-4 w-4" />Generate Key</Button>}
-        />
-      ) : (
-        <div className="space-y-6">
-          <div>
-            <h3 className="mb-3 text-sm font-semibold text-foreground">Active Keys ({activeKeys.length})</h3>
-            <div className="space-y-2">
-              {activeKeys.map((key) => (
-                <Card key={key.id} className="flex items-center justify-between p-4">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary/60">
-                      <KeyRound className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-foreground">{key.name}</span>
-                        <KeyTypeBadge type={key.type} />
-                      </div>
-                      <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="font-mono">{key.prefix}••••••••••••••••</span>
-                        {key.restrictions && <span>· {key.restrictions}</span>}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="hidden text-right sm:block">
-                      <p className="text-xs text-muted-foreground">Created</p>
-                      <p className="text-xs font-medium text-foreground">{formatDate(key.createdAt)}</p>
-                    </div>
-                    <div className="hidden text-right sm:block">
-                      <p className="text-xs text-muted-foreground">Last used</p>
-                      <p className="flex items-center gap-1 text-xs font-medium text-foreground">
-                        <Clock className="h-3 w-3" />
-                        {key.lastUsedAt ? formatRelativeTime(key.lastUsedAt) : 'Never'}
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => setRevokeTarget(key)}
-                    >
-                      Revoke
-                    </Button>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          </div>
+      {error && <p role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
 
-          {revokedKeys.length > 0 && (
-            <div>
-              <h3 className="mb-3 text-sm font-semibold text-muted-foreground">Revoked Keys ({revokedKeys.length})</h3>
-              <div className="space-y-2">
-                {revokedKeys.map((key) => (
-                  <Card key={key.id} className="flex items-center justify-between p-4 opacity-60">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary/30">
-                        <Trash2 className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-foreground line-through">{key.name}</span>
-                          <KeyTypeBadge type={key.type} />
-                        </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          Revoked · Created {formatDate(key.createdAt)}
-                        </p>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+      {secret && (
+        <Card className="mb-5 border-primary/30 p-5">
+          <h2 className="font-semibold text-foreground">Copy your new API key now</h2>
+          <p className="mt-1 text-sm text-muted-foreground">MailForge will not show this secret again after you close this panel.</p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <code className="min-w-0 flex-1 break-all rounded-md border border-border bg-background p-3 text-sm">{secret}</code>
+            <Button onClick={copySecret} variant="outline" className="shrink-0">{copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}{copied ? 'Copied' : 'Copy key'}</Button>
+          </div>
+          <Button className="mt-3" variant="outline" onClick={() => setSecret('')}>I saved the key</Button>
+        </Card>
       )}
 
-      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) { setNewKeyName(''); setNewKeyRestrictions(''); } }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Generate API Key</DialogTitle>
-            <DialogDescription>
-              Create a new API key for authenticating with the MailForge API. The secret will be shown only once.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="keyname">Key name</Label>
-              <Input
-                id="keyname"
-                placeholder="e.g., Production Server"
-                value={newKeyName}
-                onChange={(e) => setNewKeyName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="keytype">Key type</Label>
-              <Select value={newKeyType} onValueChange={(v) => setNewKeyType(v as KeyType)}>
-                <SelectTrigger id="keytype">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="test">Test — mock data only, no real emails sent</SelectItem>
-                  <SelectItem value="live">Live — sends real emails through transport</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="restrictions">Restrictions (optional)</Label>
-              <Input
-                id="restrictions"
-                placeholder="e.g., Domain: example.com"
-                value={newKeyRestrictions}
-                onChange={(e) => setNewKeyRestrictions(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">Limit which domains or endpoints this key can access.</p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={!newKeyName.trim()}>Generate Key</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <Card className="p-5">
+        <h2 className="mb-4 text-sm font-semibold text-foreground">Generate API key</h2>
+        <form onSubmit={createKey} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px_auto]">
+          <input aria-label="Key name" required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Production app" className="rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
+          <select aria-label="Key type" value={type} onChange={(event) => setType(event.target.value as KeyType)} className="rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary">
+            <option value="test">Test key</option>
+            <option value="live">Live key</option>
+          </select>
+          <Button disabled={busy} type="submit"><Plus className="mr-2 h-4 w-4" />{busy ? 'Generating…' : 'Generate key'}</Button>
+        </form>
+      </Card>
 
-      <Dialog open={!!createdKey} onOpenChange={(open) => !open && closeCreatedDialog()}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>API Key Created</DialogTitle>
-            <DialogDescription>
-              Copy your API key now. For security, it will not be shown again.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="flex items-center gap-2 rounded-lg border border-warning/20 bg-warning/5 p-3">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
-              <p className="text-xs text-foreground">This is the only time you will see the full key. Store it securely.</p>
-            </div>
-            <div className="rounded-lg border border-border bg-secondary/30 p-3">
-              <div className="flex items-center gap-2">
-                <code className={`flex-1 break-all font-mono text-sm text-foreground ${showKey ? '' : 'blur-sm select-none'}`}>
-                  {createdKey}
-                </code>
-                <button
-                  onClick={() => setShowKey(!showKey)}
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                >
-                  {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-                <button
-                  onClick={() => createdKey && copyKey(createdKey)}
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                >
-                  {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
+      <div className="mt-6">
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Your keys ({keys.filter((key) => !key.revoked).length} active)</h2>
+        {keys.length === 0 ? (
+          <Card className="flex flex-col items-center p-10 text-center">
+            <KeyRound className="h-8 w-8 text-muted-foreground" />
+            <p className="mt-3 font-medium text-foreground">No API keys yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">Generate a test key to make your first authenticated API request.</p>
+          </Card>
+        ) : (
+          <div className="space-y-2">
+            {keys.map((key) => (
+              <Card key={key.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="rounded-lg bg-secondary p-2"><KeyRound className="h-4 w-4 text-muted-foreground" /></div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium text-foreground">{key.name}</span><KeyTypeBadge type={key.type} />{key.revoked && <span className="rounded bg-destructive/10 px-2 py-0.5 text-xs text-destructive">Revoked</span>}</div>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">{key.prefix}••••••••••••••••</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Created {formatDate(key.createdAt)} · Last used {key.lastUsedAt ? formatRelativeTime(key.lastUsedAt) : 'Never'}</p>
+                  </div>
+                </div>
+                {!key.revoked && <Button variant="outline" size="sm" className="self-start text-destructive hover:text-destructive sm:self-center" onClick={() => void revokeKey(key)}><Trash2 className="mr-2 h-4 w-4" />Revoke</Button>}
+              </Card>
+            ))}
           </div>
-          <DialogFooter>
-            <Button onClick={closeCreatedDialog}>I&apos;ve saved my key</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog open={!!revokeTarget} onOpenChange={(open) => !open && setRevokeTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke API Key?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently revoke <span className="font-medium text-foreground">{revokeTarget?.name}</span>. Any application using this key will immediately lose access. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRevoke}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Revoke Key
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        )}
+      </div>
     </div>
   );
 }
