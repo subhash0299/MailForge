@@ -6,7 +6,7 @@ workers_dev = true
 [[d1_databases]]
 binding = "DB"
 database_name = "mailforge"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "d3513b50-c1c8-4677-bc73-639339b428b9"
 migrations_dir = "migrations"
 
 [[queues.producers]]
@@ -22,4 +22,4 @@ dead_letter_queue = "mailforge-delivery-dlq"
 
 [vars]
 # Set APP_ORIGIN to your deployed dashboard origin before production.
-APP_ORIGIN = "http://localhost:3000"
+APP_ORIGIN = "https://mailforge.vercel.app"
