@@ -92,7 +92,7 @@ The sender domain must be marked `verified` in D1, and the recipient must not be
 
 Account registration is disabled unless the encrypted Worker secret `REGISTRATION_ENABLED` is set to `true`. Enable it only while creating the first owner account, then set it back to `false` (or remove the secret) before exposing the dashboard publicly. Sign-in remains available when registration is disabled.
 
-The dashboard uses a same-origin Next.js proxy at `/api/mailforge/*`; the proxy forwards to `MAILFORGE_API_URL` (must be set to the intended Worker URL). Set `MAILFORGE_API_URL` in Vercel if you deploy the Worker at a different URL.
+The dashboard uses a same-origin Next.js proxy at `/api/mailforge/*`; the proxy forwards to `MAILFORGE_API_URL` (can be set to the intended Worker URL; production Vercel deployments default to the configured production Worker, while previews require an explicit URL to avoid touching production data). Set `MAILFORGE_API_URL` in Vercel if you deploy the Worker at a different URL.
 
 - `POST /v1/auth/register`: create an account and workspace. Passwords are PBKDF2-SHA-256 hashed; sessions are random, stored as hashes, and returned as Secure, HttpOnly cookies.
 - `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/auth/me`: session management.
