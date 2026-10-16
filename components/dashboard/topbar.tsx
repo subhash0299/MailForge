@@ -22,7 +22,7 @@ export function Topbar() {
 
   async function logout() {
     setSigningOut(true);
-    try { await apiRequest('/v1/auth/logout', { method: 'POST', body: '{}' }); }
+    try { await apiRequest('/v1/auth/logout', { method: 'POST', body: '{}' }); } catch { /* Continue clearing the local UI even if the API is unavailable. */ }
     finally { router.replace('/login'); router.refresh(); }
   }
 
