@@ -48,7 +48,7 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   const origin = request.headers.get("Origin");
   const allowed = env.APP_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
   const headers: Record<string, string> = {
-    "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
+    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key",
     "access-control-allow-credentials": "true",
     "vary": "Origin",
