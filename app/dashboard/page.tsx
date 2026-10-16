@@ -1,196 +1,72 @@
 'use client';
 
-import { useState } from 'react';
-import dynamic from 'next/dynamic';
-import {
-  Mail,
-  CheckCircle2,
-  AlertTriangle,
-  TrendingUp,
-  Activity,
-  Globe,
-  Zap,
-  AlertCircle,
-} from 'lucide-react';
-
-import { StatCard } from '@/components/dashboard/stat-card';
+import { useEffect, useState } from 'react';
+import { Activity, AlertTriangle, CheckCircle2, Mail, TrendingUp } from 'lucide-react';
 import { PageHeader } from '@/components/dashboard/page-header';
-import { MockDataBanner } from '@/components/dashboard/feedback';
+import { StatCard } from '@/components/dashboard/stat-card';
 import { StatusBadge } from '@/components/dashboard/status-badge';
-import { DateRangeFilter } from '@/components/dashboard/date-range-filter';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import {
-  mockOverviewStats,
-  mockEmailLogs,
-  mockDomains,
-  mockRecentErrors,
-  generateUsageData,
-} from '@/lib/mock-data';
+import { apiRequest } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/format';
-import type { UsageData } from '@/lib/types';
 
-const EmailVolumeChart = dynamic(
-  () => import('@/components/dashboard/email-volume-chart'),
-  { ssr: false, loading: () => <div className="h-[340px] animate-pulse rounded-lg bg-secondary/30" /> }
-);
-
+type Overview = {
+  stats: { totalSubmitted: number; totalDelivered: number; totalBounced: number; deliveryRate: number; totalDeferred: number; totalFailed: number; apiQuotaUsed: number; apiQuotaTotal: number };
+  domains: { total: number; verified: number };
+  recentEmails: Array<{ id: string; recipient: string; sender: string; subject: string | null; status: string; submitted_at: string; last_updated: string; domain: string; smtp_code: number | null; error_details: string | null }>;
+};
 
 export default function OverviewPage() {
-  const [range, setRange] = useState('7d');
-  const days = range === '24h' ? 1 : range === '7d' ? 7 : range === '30d' ? 30 : 90;
-  const usageData = generateUsageData(days);
-  const recentEmails = mockEmailLogs.slice(0, 6);
-  const verifiedDomains = mockDomains.filter((d) => d.status === 'verified').length;
-  const totalDomains = mockDomains.length;
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<Overview>('/v1/overview')
+      .then((data) => { if (active) setOverview(data); })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : 'Could not load overview.'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  const stats = overview?.stats;
+  const percent = stats?.apiQuotaTotal ? Math.min(100, stats.apiQuotaUsed / stats.apiQuotaTotal * 100) : 0;
 
   return (
     <div>
-      <PageHeader
-        title="Overview"
-        description="Monitor your email delivery performance and infrastructure health."
-        action={<DateRangeFilter value={range} onChange={setRange} />}
-      />
-      <MockDataBanner />
-
+      <PageHeader title="Overview" description="Live email activity and delivery performance from your MailForge workspace." />
+      {error && <div role="alert" className="mb-5 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          label="Emails Submitted"
-          value={mockOverviewStats.totalSubmitted.toLocaleString()}
-          trend={{ value: '+12.3%', positive: true }}
-          subValue="vs previous period"
-          icon={Mail}
-        />
-        <StatCard
-          label="Delivered"
-          value={mockOverviewStats.totalDelivered.toLocaleString()}
-          trend={{ value: '+8.7%', positive: true }}
-          subValue="91.7% delivery rate"
-          icon={CheckCircle2}
-        />
-        <StatCard
-          label="Bounced"
-          value={mockOverviewStats.totalBounced.toLocaleString()}
-          trend={{ value: '-2.1%', positive: true }}
-          subValue="4.0% bounce rate"
-          icon={AlertTriangle}
-        />
-        <StatCard
-          label="Delivery Rate"
-          value={`${mockOverviewStats.deliveryRate}%`}
-          trend={{ value: '+1.2%', positive: true }}
-          subValue="rolling average"
-          icon={TrendingUp}
-        />
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <EmailVolumeChart data={usageData} />
-
-        <Card className="p-5">
-          <div className="mb-4">
-            <h3 className="text-sm font-semibold text-foreground">API Usage</h3>
-            <p className="text-xs text-muted-foreground">Current billing period</p>
-          </div>
-          <div className="space-y-4">
-            <div>
-              <div className="flex items-end justify-between mb-2">
-                <span className="text-xs text-muted-foreground">Emails sent</span>
-                <span className="text-sm font-semibold tabular-nums text-foreground">
-                  {mockOverviewStats.apiQuotaUsed.toLocaleString()}
-                </span>
-              </div>
-              <Progress value={48} className="h-2" />
-              <div className="mt-1.5 flex justify-between text-[11px] text-muted-foreground">
-                <span>{Math.round(mockOverviewStats.apiQuotaUsed / mockOverviewStats.apiQuotaTotal * 100)}% used</span>
-                <span>{mockOverviewStats.apiQuotaTotal.toLocaleString()} limit</span>
-              </div>
-            </div>
-            <div className="space-y-2 pt-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Deferred</span>
-                <span className="font-medium tabular-nums text-foreground">{mockOverviewStats.totalDeferred.toLocaleString()}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Failed</span>
-                <span className="font-medium tabular-nums text-foreground">{mockOverviewStats.totalFailed.toLocaleString()}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Verified domains</span>
-                <span className="font-medium tabular-nums text-foreground">{verifiedDomains} / {totalDomains}</span>
-              </div>
-            </div>
-          </div>
-        </Card>
+        <StatCard label="Emails Submitted" value={loading ? '—' : (stats?.totalSubmitted ?? 0).toLocaleString()} subValue="All time" icon={Mail} />
+        <StatCard label="Accepted / Delivered" value={loading ? '—' : (stats?.totalDelivered ?? 0).toLocaleString()} subValue="Confirmed delivery events only" icon={CheckCircle2} />
+        <StatCard label="Bounced" value={loading ? '—' : (stats?.totalBounced ?? 0).toLocaleString()} subValue="Provider-reported bounces" icon={AlertTriangle} />
+        <StatCard label="Delivery Rate" value={loading ? '—' : `${stats?.deliveryRate ?? 0}%`} subValue="Based on recorded delivered events" icon={TrendingUp} />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="p-5 lg:col-span-2">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-foreground">Recent Email Activity</h3>
-            <a href="/dashboard/email-activity" className="text-xs font-medium text-primary hover:underline">
-              View all
-            </a>
+            <div><h2 className="text-sm font-semibold text-foreground">Recent Email Activity</h2><p className="mt-1 text-xs text-muted-foreground">Latest messages recorded by the backend</p></div>
+            <a href="/dashboard/email-activity" className="text-xs font-medium text-primary hover:underline">View all</a>
           </div>
-          <div className="space-y-1">
-            {recentEmails.map((email) => (
-              <div
-                key={email.id}
-                className="flex items-center justify-between rounded-md px-3 py-2.5 transition-colors hover:bg-secondary/30"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <Activity className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">{email.subject}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      to {email.recipient} · {formatRelativeTime(email.submittedAt)}
-                    </p>
-                  </div>
-                </div>
-                <StatusBadge status={email.status} />
-              </div>
-            ))}
-          </div>
+          {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading activity…</p> :
+            !overview?.recentEmails.length ? <div className="py-10 text-center"><Activity className="mx-auto h-7 w-7 text-muted-foreground" /><p className="mt-3 text-sm font-medium text-foreground">No emails yet</p><p className="mt-1 text-xs text-muted-foreground">Create an API key and send your first message to see it here.</p></div> :
+            <div className="divide-y divide-border">{overview.recentEmails.map((email) => <div key={email.id} className="flex items-center justify-between gap-3 py-3"><div className="flex min-w-0 items-start gap-3"><Activity className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{email.subject || '(no subject)'}</p><p className="truncate text-xs text-muted-foreground">to {email.recipient} · {formatRelativeTime(email.submitted_at)}</p></div></div><StatusBadge status={email.status as never} /></div>)}</div>}
         </Card>
-
         <div className="space-y-4">
           <Card className="p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <Globe className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-sm font-semibold text-foreground">Domain Status</h3>
-            </div>
-            <div className="space-y-2">
-              {mockDomains.slice(0, 4).map((domain) => (
-                <div key={domain.id} className="flex items-center justify-between">
-                  <span className="truncate text-xs text-foreground/90">{domain.domain}</span>
-                  <StatusBadge status={domain.status} type="domain" />
-                </div>
-              ))}
-            </div>
+            <h2 className="text-sm font-semibold text-foreground">Usage</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Messages recorded by MailForge</p>
+            <div className="mt-5 flex items-end justify-between"><span className="text-xs text-muted-foreground">Submitted</span><span className="text-sm font-semibold tabular-nums text-foreground">{(stats?.apiQuotaUsed ?? 0).toLocaleString()} / {(stats?.apiQuotaTotal ?? 3000).toLocaleString()}</span></div>
+            <Progress value={percent} className="mt-2 h-2" />
+            <div className="mt-4 space-y-3"><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Deferred / retrying</span><span className="font-medium text-foreground">{stats?.totalDeferred ?? 0}</span></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">Failed</span><span className="font-medium text-foreground">{stats?.totalFailed ?? 0}</span></div></div>
           </Card>
-
           <Card className="p-5">
-            <div className="mb-3 flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-sm font-semibold text-foreground">Recent Errors</h3>
-            </div>
-            <div className="space-y-2.5">
-              {mockRecentErrors.slice(0, 4).map((err) => (
-                <div key={err.id} className="flex items-start gap-2">
-                  <span
-                    className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${
-                      err.level === 'error' ? 'bg-destructive' : 'bg-warning'
-                    }`}
-                  />
-                  <div className="min-w-0">
-                    <p className="text-xs leading-tight text-foreground/90">{err.message}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {err.source} · {formatRelativeTime(err.timestamp)}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <h2 className="text-sm font-semibold text-foreground">Sending Domains</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Verified sender domains in this workspace</p>
+            <p className="mt-4 text-2xl font-semibold text-foreground">{overview?.domains.verified ?? 0}<span className="text-sm font-normal text-muted-foreground"> / {overview?.domains.total ?? 0} verified</span></p>
+            <a href="/dashboard/domains" className="mt-3 inline-block text-xs font-medium text-primary hover:underline">Manage domains</a>
           </Card>
         </div>
       </div>

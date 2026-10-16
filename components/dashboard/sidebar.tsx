@@ -77,9 +77,9 @@ export function Sidebar({ onItemClick }: { onItemClick?: () => void }) {
 
       <div className="border-t border-border p-4">
         <div className="rounded-lg border border-border bg-secondary/50 p-3">
-          <p className="text-xs font-medium text-foreground">Development Mode</p>
+          <p className="text-xs font-medium text-foreground">Backend connected</p>
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            Using mock data. No real emails are sent.
+            Core overview, API keys, and email logs use live backend data. Domain verification and other modules are still in progress.
           </p>
         </div>
       </div>
