@@ -389,7 +389,7 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
 
 function cookieValue(request: Request, name: string): string | null {
   const cookie = request.headers.get("Cookie") ?? "";
-  const match = cookie.match(new RegExp(`(?:^|;\\\\s*)${name}=([^;]+)`));
+  const match = cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
   return match ? decodeURIComponent(match[1]) : null;
 }
 
@@ -417,7 +417,7 @@ async function getDashboardSession(request: Request, env: Env): Promise<Dashboar
 }
 
 function sessionCookie(token: string, maxAge: number): string {
-  return `mf_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}`;
+  return `mf_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 }
 
 function apiKeySecret(type: "test" | "live"): string {
