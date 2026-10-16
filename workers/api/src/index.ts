@@ -896,13 +896,15 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
       env.DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) AS verified FROM sending_domains WHERE workspace_id = ?").bind(session.workspace_id).first<{ total: number; verified: number }>(),
     ]);
     const submitted = counts?.submitted ?? 0;
+    const quotaMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+    const monthlyCount = await env.DB.prepare("SELECT COUNT(*) AS count FROM email_logs WHERE workspace_id = ? AND submitted_at >= ?").bind(session.workspace_id, quotaMonthStart).first<{ count: number }>();
     const delivered = counts?.delivered ?? 0;
     return json({
       stats: {
         totalSubmitted: submitted, totalDelivered: delivered, totalBounced: counts?.bounced ?? 0,
         deliveryRate: submitted ? Math.round((delivered / submitted) * 1000) / 10 : 0,
         totalDeferred: counts?.deferred ?? 0, totalFailed: counts?.failed ?? 0,
-        apiQuotaUsed: submitted, apiQuotaTotal: 10000,
+        apiQuotaUsed: monthlyCount?.count ?? 0, apiQuotaTotal: 10000,
       },
       domains: { total: domainCounts?.total ?? 0, verified: domainCounts?.verified ?? 0 },
       recentEmails: recent.results ?? [],
