@@ -163,7 +163,7 @@ async function handleSmtpTest(request: Request, env: Env): Promise<Response> {
     : "MailForge SMTP connection test";
 
   try {
-    const result = await sendSmtpEmail(smtpEnv, {
+    const result = await sendSmtpEmail(env, {
       from,
       to: normalizeEmail(input.to),
       subject,
