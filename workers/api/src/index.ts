@@ -38,7 +38,7 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   const origin = request.headers.get("Origin");
   const allowed = env.APP_ORIGIN.split(",").map((value) => value.trim()).filter(Boolean);
   const headers: Record<string, string> = {
-    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-methods": "GET, POST, PATCH, OPTIONS",
     "access-control-allow-headers": "Authorization, Content-Type, Idempotency-Key",
     "access-control-allow-credentials": "true",
     "vary": "Origin",
@@ -558,6 +558,8 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
       weeklyDigest: rawNotifications.weeklyDigest === true,
       securityAlerts: rawNotifications.securityAlerts === true,
     };
+    const currentWorkspace = await env.DB.prepare("SELECT plan FROM workspaces WHERE id = ? AND owner_id = ? LIMIT 1").bind(session.workspace_id, session.user_id).first<{ plan: string }>();
+    if (!currentWorkspace) return json({ error: { code: "forbidden", message: "Only the workspace owner can update these settings." } }, 403);
     const now = new Date().toISOString();
     await env.DB.batch([
       env.DB.prepare("UPDATE users SET full_name = ? WHERE id = ?").bind(fullName || null, session.user_id),
@@ -567,7 +569,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     ]);
     return json({
       profile: { fullName, email: session.email },
-      workspace: { name: workspaceName, plan: "free" },
+      workspace: { name: workspaceName, plan: currentWorkspace.plan },
       settings: { timezone, dateFormat, defaultSenderEmail, defaultSenderName: defaultSenderName || "MailForge", notifications },
     }, 200, { "cache-control": "no-store" });
   }
