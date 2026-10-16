@@ -597,7 +597,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     return json({ data: { id, domain, status: "pending", verification_token: token, created_at: now, verificationRecord: { type: "TXT", name: `_mailforge-verification.${domain}`, value: `mailforge-verification=${token}` } } }, 201, { "cache-control": "no-store" });
   }
 
-  const verifyDomainMatch = path.match(/^\\/v1\\/domains\\/([a-f0-9-]+)\\/verify$/i);
+  const verifyDomainMatch = path.match(/^\/v1\/domains\/([a-f0-9-]+)\/verify$/i);
   if (method === "POST" && verifyDomainMatch) {
     const domain = await env.DB.prepare("SELECT id, domain, verification_token, status FROM sending_domains WHERE id = ? AND workspace_id = ? LIMIT 1")
       .bind(verifyDomainMatch[1], session.workspace_id).first<{ id: string; domain: string; verification_token: string; status: string }>();
