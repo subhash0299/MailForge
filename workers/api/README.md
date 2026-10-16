@@ -1,6 +1,6 @@
 # MailForge Cloudflare API
 
-This Worker is the first backend slice for MailForge. The existing Next.js dashboard is still hosted separately and currently contains mock data; this Worker does not switch the dashboard to live data yet.
+This Worker powers MailForge's authenticated dashboard and email delivery API. The Next.js app proxies browser requests through a same-origin route to keep session cookies first-party.
 
 ## Cloudflare resources
 
@@ -85,7 +85,21 @@ Example body:
 }
 ```
 
-The sender domain must already be marked `verified` in D1, and the recipient must not be suppressed. The API key must exist in the `api_keys` table with a SHA-256 hash of the complete key. A key-management endpoint and dashboard integration are not implemented yet.
+The sender domain must be marked `verified` in D1, and the recipient must not be suppressed. For initial Maileroo testing only, the exact address configured in `SMTP_USERNAME` is also allowed as the sender. Do not treat this provider sender exception as a multi-tenant production domain-verification system.
+
+## Dashboard authentication and APIs
+
+The dashboard uses a same-origin Next.js proxy at `/api/mailforge/*`; the proxy forwards to `MAILFORGE_API_URL` (defaults to the deployed Worker URL). Set `MAILFORGE_API_URL` in Vercel if you deploy the Worker at a different URL.
+
+- `POST /v1/auth/register`: create an account and workspace. Passwords are PBKDF2-SHA-256 hashed; sessions are random, stored as hashes, and returned as Secure, HttpOnly cookies.
+- `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/auth/me`: session management.
+- `GET /v1/api-keys`, `POST /v1/api-keys`, `DELETE /v1/api-keys/:id`: create/list/revoke workspace API keys. Full secrets are returned only at creation.
+- `GET /v1/overview`: live workspace counters, domain counts, and recent email activity.
+- `GET /v1/emails`: workspace-scoped email logs with `limit`, `offset`, `status`, and `search` filters.
+- `GET /v1/emails/:id`: workspace-scoped message details, delivery attempts, and event history.
+- `GET /v1/domains`: list configured sending domains.
+
+The overview, API-key, and email-activity dashboard pages now use live API data. Domain management, suppressions, webhooks, and some usage/settings screens still need live integration. Account email verification, password reset, strong abuse/rate controls, and customer-managed DNS verification are not implemented yet; do not open public self-registration for unrestricted production traffic until these controls are added.
 
 ## SMTP delivery behavior
 
