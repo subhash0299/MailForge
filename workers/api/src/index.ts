@@ -1,9 +1,14 @@
+import { sendSmtpEmail, SmtpDeliveryError } from "./smtp";
+
 export interface Env {
   DB: D1Database;
   MAIL_QUEUE: Queue<{ emailLogId: string }>;
   APP_ORIGIN: string;
-  DELIVERY_PROVIDER_URL?: string;
-  DELIVERY_PROVIDER_TOKEN?: string;
+  SMTP_HOST?: string;
+  SMTP_PORT?: string;
+  SMTP_SECURITY?: "tls" | "starttls";
+  SMTP_USERNAME?: string;
+  SMTP_PASSWORD?: string;
 }
 
 type ApiKeyRow = {
@@ -209,62 +214,59 @@ async function consumeMailQueue(batch: MessageBatch<{ emailLogId: string }>, env
       continue;
     }
 
-    if (!env.DELIVERY_PROVIDER_URL || !env.DELIVERY_PROVIDER_TOKEN) {
-      // Do not silently mark an email as sent when delivery credentials are absent.
-      await env.DB.prepare("UPDATE email_logs SET status = 'failed', error_details = 'Delivery provider is not configured', last_updated = ? WHERE id = ?")
+    if (!env.SMTP_HOST || !env.SMTP_USERNAME || !env.SMTP_PASSWORD) {
+      await env.DB.prepare("UPDATE email_logs SET status = 'failed', error_details = 'SMTP is not configured', last_updated = ? WHERE id = ?")
         .bind(new Date().toISOString(), email.id).run();
       message.ack();
       continue;
     }
 
     const started = Date.now();
-    const now = new Date().toISOString();
     await env.DB.prepare("UPDATE email_logs SET status = 'processing', last_updated = ? WHERE id = ?")
-      .bind(now, email.id).run();
+      .bind(new Date().toISOString(), email.id).run();
 
     try {
-      const providerResponse = await fetch(env.DELIVERY_PROVIDER_URL, {
-        method: "POST",
-        headers: {
-          "authorization": `Bearer ${env.DELIVERY_PROVIDER_TOKEN}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          from: email.sender,
-          to: email.recipient,
-          subject: email.subject,
-          text: email.text_body,
-          html: email.html_body,
-          metadata: { mailforge_email_id: email.id, workspace_id: email.workspace_id },
-        }),
+      const result = await sendSmtpEmail(env, {
+        from: email.sender,
+        to: email.recipient,
+        subject: email.subject,
+        text: email.text_body,
+        html: email.html_body,
       });
-
-      const responseText = (await providerResponse.text()).slice(0, 2000);
       const finished = new Date().toISOString();
       const attemptNumber = await env.DB.prepare(
         "SELECT COUNT(*) AS count FROM delivery_attempts WHERE email_log_id = ?",
       ).bind(email.id).first<{ count: number }>();
       const nextAttempt = (attemptNumber?.count ?? 0) + 1;
       await env.DB.batch([
-        env.DB.prepare("INSERT INTO delivery_attempts (id, email_log_id, attempt_number, status, response_code, response_text, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-          .bind(crypto.randomUUID(), email.id, nextAttempt, providerResponse.ok ? "accepted" : "failed", providerResponse.status, responseText, Date.now() - started, finished),
-        env.DB.prepare("UPDATE email_logs SET status = ?, smtp_code = ?, smtp_response = ?, error_details = ?, last_updated = ? WHERE id = ?")
-          .bind(providerResponse.ok ? "accepted" : "failed", providerResponse.status, responseText, providerResponse.ok ? null : "Delivery provider returned a non-success response", finished, email.id),
-        env.DB.prepare("INSERT INTO email_events (id, email_log_id, event_type, description, created_at) VALUES (?, ?, ?, ?, ?)")
-          .bind(crypto.randomUUID(), email.id, providerResponse.ok ? "email.accepted" : "email.failed", providerResponse.ok ? "Accepted by configured delivery provider" : "Configured delivery provider rejected the message", finished),
+        env.DB.prepare("INSERT INTO delivery_attempts (id, email_log_id, attempt_number, status, response_code, response_text, duration_ms, created_at) VALUES (?, ?, ?, 'accepted', ?, ?, ?, ?)")
+          .bind(crypto.randomUUID(), email.id, nextAttempt, result.code, result.response.slice(0, 2000), Date.now() - started, finished),
+        env.DB.prepare("UPDATE email_logs SET status = 'accepted', smtp_code = ?, smtp_response = ?, error_details = NULL, last_updated = ? WHERE id = ?")
+          .bind(result.code, result.response.slice(0, 2000), finished, email.id),
+        env.DB.prepare("INSERT INTO email_events (id, email_log_id, event_type, description, created_at) VALUES (?, ?, 'email.accepted', 'Accepted by configured SMTP server', ?)")
+          .bind(crypto.randomUUID(), email.id, finished),
       ]);
-
-      if (providerResponse.ok) {
-        message.ack();
-      } else if (providerResponse.status >= 500 || providerResponse.status === 429) {
-        message.retry();
-      } else {
-        message.ack();
-      }
-    } catch {
-      await env.DB.prepare("UPDATE email_logs SET status = 'deferred', error_details = 'Temporary delivery provider error; retry scheduled', last_updated = ? WHERE id = ?")
-        .bind(new Date().toISOString(), email.id).run();
-      message.retry();
+      message.ack();
+    } catch (error) {
+      const smtpError = error instanceof SmtpDeliveryError ? error : null;
+      const finished = new Date().toISOString();
+      const responseText = (smtpError?.message ?? "SMTP connection failed").slice(0, 2000);
+      const statusCode = smtpError?.code ?? 0;
+      const retryable = smtpError?.retryable ?? true;
+      const attemptNumber = await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM delivery_attempts WHERE email_log_id = ?",
+      ).bind(email.id).first<{ count: number }>();
+      const nextAttempt = (attemptNumber?.count ?? 0) + 1;
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO delivery_attempts (id, email_log_id, attempt_number, status, response_code, response_text, duration_ms, created_at) VALUES (?, ?, ?, 'failed', ?, ?, ?, ?)")
+          .bind(crypto.randomUUID(), email.id, nextAttempt, statusCode, responseText, Date.now() - started, finished),
+        env.DB.prepare("UPDATE email_logs SET status = ?, smtp_code = ?, smtp_response = ?, error_details = ?, last_updated = ? WHERE id = ?")
+          .bind(retryable ? "deferred" : "failed", statusCode, responseText, responseText, finished, email.id),
+        env.DB.prepare("INSERT INTO email_events (id, email_log_id, event_type, description, created_at) VALUES (?, ?, ?, ?, ?)")
+          .bind(crypto.randomUUID(), email.id, retryable ? "email.deferred" : "email.failed", retryable ? "Temporary SMTP failure; retry scheduled" : "SMTP server rejected the message", finished),
+      ]);
+      if (retryable) message.retry();
+      else message.ack();
     }
   }
 }
