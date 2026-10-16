@@ -16,11 +16,12 @@ npx wrangler login
 npx wrangler d1 create mailforge
 ```
 
-Copy the returned database ID into `wrangler.toml` at `REPLACE_WITH_D1_DATABASE_ID`. Then create queues and apply the schema:
+The production D1 database ID is already configured in `wrangler.toml`. Confirm the ID matches your Cloudflare dashboard before continuing. Then create the queues if they do not already exist and apply the schema:
 
 ```bash
 npx wrangler queues create mailforge-delivery
 npx wrangler queues create mailforge-delivery-dlq
+npx wrangler d1 migrations list mailforge --remote
 npx wrangler d1 migrations apply mailforge --remote
 ```
 
@@ -32,7 +33,7 @@ npx wrangler deploy
 
 ## Worker configuration and secrets
 
-Set `APP_ORIGIN` in `wrangler.toml` to the exact deployed dashboard origin (for example, your Vercel production URL). For local development, use `http://localhost:3000`.
+`wrangler.toml` is preconfigured for the production dashboard origin `https://mailforge.vercel.app`. Set `APP_ORIGIN` to the origin only (no `/dashboard` path), because CORS compares the browser `Origin` header. For local development, temporarily use `http://localhost:3000` and restore the production value before deploying.
 
 Email sending intentionally requires a configured provider adapter. Set these as Worker secrets only after choosing a provider whose API accepts the JSON payload used in `src/index.ts`:
 
