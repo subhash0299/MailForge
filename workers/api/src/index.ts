@@ -485,7 +485,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
 
   const session = await getDashboardSession(request, env);
   if (!session) {
-    if (path.startsWith("/v1/api-keys") || path.startsWith("/v1/emails") || path === "/v1/overview" || path === "/v1/domains") {
+    if (path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path === "/v1/domains") {
       return json({ error: { code: "unauthorized", message: "Sign in to access workspace data." } }, 401, { "cache-control": "no-store" });
     }
     return null;
