@@ -152,9 +152,11 @@ export interface RecentError {
   source: string;
 }
 
+import type { LucideIcon } from 'lucide-react';
+
 export interface NavItem {
   label: string;
   href: string;
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  icon: LucideIcon;
   badge?: string;
 }
