@@ -183,11 +183,15 @@ async function handleSendEmail(request: Request, env: Env): Promise<Response> {
     "SELECT id FROM sending_domains WHERE workspace_id = ? AND domain = ? COLLATE NOCASE AND status = 'verified' LIMIT 1",
   ).bind(apiKey.workspace_id, domain).first<{ id: string }>();
 
-  if (!verifiedDomain) {
+  // Until customer-managed DNS verification is available, permit only the exact
+  // sender identity configured for this SMTP account. Never permit arbitrary
+  // addresses on the provider domain.
+  const providerSender = env.SMTP_USERNAME ? normalizeEmail(env.SMTP_USERNAME) : "";
+  if (!verifiedDomain && from !== providerSender) {
     return json({
       error: {
         code: "domain_not_verified",
-        message: "Verify the sender domain in your MailForge dashboard before sending.",
+        message: "Verify the sender domain in your MailForge dashboard before sending. The configured provider sender is allowed for initial testing.",
       },
     }, 403);
   }
@@ -325,8 +329,20 @@ async function consumeMailQueue(batch: MessageBatch<{ emailLogId: string }>, env
         env.DB.prepare("INSERT INTO email_events (id, email_log_id, event_type, description, created_at) VALUES (?, ?, ?, ?, ?)")
           .bind(crypto.randomUUID(), email.id, retryable ? "email.deferred" : "email.failed", retryable ? "Temporary SMTP failure; retry scheduled" : "SMTP server rejected the message", finished),
       ]);
-      if (retryable) message.retry();
-      else message.ack();
+      if (retryable && message.attempts < 5) {
+        message.retry();
+      } else {
+        if (retryable) {
+          const exhaustedAt = new Date().toISOString();
+          await env.DB.batch([
+            env.DB.prepare("UPDATE email_logs SET status = 'failed', error_details = ?, last_updated = ? WHERE id = ?")
+              .bind("Delivery retries exhausted; message sent to dead-letter queue", exhaustedAt, email.id),
+            env.DB.prepare("INSERT INTO email_events (id, email_log_id, event_type, description, created_at) VALUES (?, ?, 'email.failed', 'Delivery retries exhausted', ?)")
+              .bind(crypto.randomUUID(), email.id, exhaustedAt),
+          ]);
+        }
+        message.ack();
+      }
     }
   }
 }
