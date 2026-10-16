@@ -676,7 +676,39 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     ).bind(session.workspace_id, host, port, security, username, encryptedPassword, senderEmail, now, now).run();
     await env.DB.prepare("INSERT INTO audit_logs (id, workspace_id, user_id, action, resource_type, metadata_json, created_at) VALUES (?, ?, ?, 'smtp_config.updated', 'smtp_config', ?, ?)")
       .bind(crypto.randomUUID(), session.workspace_id, session.user_id, JSON.stringify({ host, port, security, senderEmail }), now).run();
-    return json({ configured: true, config: { host, port, security, username, senderEmail, passwordConfigured: true }, message: "SMTP configuration saved. MailForge will use this account for new messages." }, 200, { "cache-control": "no-store" });
+
+    // Verify the newly saved connection by sending a small test message to the signed-in account.
+    let testEmail: { status: "accepted" | "failed"; message: string };
+    try {
+      const testPassword = await decryptSmtpPassword(env, encryptedPassword);
+      await sendSmtpEmail({
+        SMTP_HOST: host,
+        SMTP_PORT: String(port),
+        SMTP_SECURITY: security,
+        SMTP_USERNAME: username,
+        SMTP_PASSWORD: testPassword,
+      }, {
+        from: senderEmail,
+        to: normalizeEmail(session.email),
+        subject: "MailForge SMTP test",
+        text: "Test email from MailForge",
+        html: null,
+      });
+      testEmail = {
+        status: "accepted",
+        message: `Settings saved. The test email was accepted by your SMTP server and sent to ${normalizeEmail(session.email)}. Check your inbox; SMTP acceptance does not guarantee delivery.`,
+      };
+    } catch {
+      testEmail = {
+        status: "failed",
+        message: "Settings were saved, but the test email could not be sent. Check your SMTP host, port, credentials, sender authorization, and security mode, then save again.",
+      };
+    }
+    return json({
+      configured: true,
+      config: { host, port, security, username, senderEmail, passwordConfigured: true },
+      testEmail,
+    }, 200, { "cache-control": "no-store" });
   }
 
   if (method === "DELETE" && path === "/v1/smtp-config") {
