@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import type { Environment } from '@/lib/types';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,7 +31,7 @@ const environments = [
 
 export function Topbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [env, setEnv] = useState(mockWorkspace.environment);
+  const [env, setEnv] = useState<Environment>(mockWorkspace.environment);
   const currentEnv = environments.find((e) => e.id === env) || environments[0];
 
   return (
@@ -81,7 +82,7 @@ export function Topbar() {
               {environments.map((e) => (
                 <DropdownMenuItem
                   key={e.id}
-                  onClick={() => setEnv(e.id as 'development' | 'production')}
+                  onClick={() => setEnv(e.id as Environment)}
                   className="flex items-center gap-2"
                 >
                   <Circle className={cn('h-2 w-2 fill-current', e.color)} />
