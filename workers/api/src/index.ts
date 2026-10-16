@@ -374,17 +374,17 @@ function randomToken(bytes = 32): string {
 async function passwordHash(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 210000 }, material, 256);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 100000 }, material, 256);
   const digest = base64Url(new Uint8Array(bits));
-  return `pbkdf2-sha256$210000$${btoa(String.fromCharCode(...salt))}$${digest}`;
+  return `pbkdf2-sha256$100000$${btoa(String.fromCharCode(...salt))}$${digest}`;
 }
 
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const [scheme, iterations, salt, expected] = stored.split("$");
-  if (scheme !== "pbkdf2-sha256" || Number(iterations) !== 210000 || !salt || !expected) return false;
+  if (scheme !== "pbkdf2-sha256" || Number(iterations) !== 100000 || !salt || !expected) return false;
   const saltBytes = Uint8Array.from(atob(salt), (c) => c.charCodeAt(0));
   const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: saltBytes, iterations: 210000 }, material, 256);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: saltBytes, iterations: 100000 }, material, 256);
   return base64Url(new Uint8Array(bits)) === expected;
 }
 
