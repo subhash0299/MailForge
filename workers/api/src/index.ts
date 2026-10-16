@@ -505,7 +505,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
 
   const session = await getDashboardSession(request, env);
   if (!session) {
-    if (path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path.startsWith("/v1/domains")) {
+    if (path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path.startsWith("/v1/domains") || path.startsWith("/v1/suppressions")) {
       return json({ error: { code: "unauthorized", message: "Sign in to access workspace data." } }, 401, { "cache-control": "no-store" });
     }
     return null;
@@ -576,6 +576,40 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
       env.DB.prepare("SELECT id, event_type, description, created_at FROM email_events WHERE email_log_id = ? ORDER BY created_at DESC").bind(emailDetailMatch[1]).all(),
     ]);
     return json({ data: { ...email, attempts: attempts.results ?? [], events: events.results ?? [] } }, 200, { "cache-control": "no-store" });
+  }
+
+  if (method === "GET" && path === "/v1/suppressions") {
+    const result = await env.DB.prepare("SELECT id, email, reason, domain, detail, created_at FROM suppressions WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 500")
+      .bind(session.workspace_id).all();
+    return json({ data: result.results ?? [] }, 200, { "cache-control": "no-store" });
+  }
+
+  if (method === "POST" && path === "/v1/suppressions") {
+    let body: { email?: unknown; reason?: unknown; detail?: unknown };
+    try { body = await request.json() as typeof body; } catch {
+      return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
+    }
+    const email = typeof body.email === "string" ? normalizeEmail(body.email) : "";
+    const reason = body.reason === "hard_bounce" || body.reason === "spam_complaint" || body.reason === "manual" ? body.reason : "manual";
+    const detail = typeof body.detail === "string" ? body.detail.trim().slice(0, 500) : "";
+    if (!validEmail(email)) return json({ error: { code: "invalid_email", message: "Enter a valid email address." } }, 400);
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    try {
+      await env.DB.prepare("INSERT INTO suppressions (id, workspace_id, email, reason, domain, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(id, session.workspace_id, email, reason, emailDomain(email), detail || null, now).run();
+    } catch {
+      return json({ error: { code: "already_suppressed", message: "This recipient is already suppressed." } }, 409);
+    }
+    return json({ data: { id, email, reason, domain: emailDomain(email), detail, created_at: now } }, 201);
+  }
+
+  const suppressionMatch = path.match(/^\\/v1\\/suppressions\\/([a-f0-9-]+)$/i);
+  if (method === "DELETE" && suppressionMatch) {
+    const result = await env.DB.prepare("DELETE FROM suppressions WHERE id = ? AND workspace_id = ?")
+      .bind(suppressionMatch[1], session.workspace_id).run();
+    if (!result.meta.changes) return json({ error: { code: "not_found", message: "Suppression not found." } }, 404);
+    return json({ ok: true });
   }
 
   if (method === "POST" && path === "/v1/domains") {
