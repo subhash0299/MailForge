@@ -1,282 +1,93 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { Search, Filter, Mail } from 'lucide-react';
-
+import { useEffect, useState } from 'react';
+import { Activity, Search, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/dashboard/page-header';
-import { MockDataBanner, EmptyState } from '@/components/dashboard/feedback';
 import { StatusBadge } from '@/components/dashboard/status-badge';
-import { DataTable } from '@/components/dashboard/data-table';
-import { DateRangeFilter } from '@/components/dashboard/date-range-filter';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Card } from '@/components/ui/card';
-import { mockEmailLogs } from '@/lib/mock-data';
-import { formatRelativeTime, formatDateTime, formatTime } from '@/lib/format';
-import type { EmailLog, EmailStatus } from '@/lib/types';
+import { Button } from '@/components/ui/button';
+import { apiRequest } from '@/lib/api';
+import { formatDateTime, formatRelativeTime } from '@/lib/format';
 
-const statusFilters: { value: string; label: string }[] = [
-  { value: 'all', label: 'All statuses' },
-  { value: 'queued', label: 'Queued' },
-  { value: 'processing', label: 'Processing' },
-  { value: 'accepted', label: 'Accepted' },
-  { value: 'delivered', label: 'Delivered' },
-  { value: 'deferred', label: 'Deferred' },
-  { value: 'bounced', label: 'Bounced' },
-  { value: 'failed', label: 'Failed' },
-];
+type EmailRow = { id: string; recipient: string; sender: string; subject: string | null; status: string; domain: string; smtp_code: number | null; smtp_response: string | null; error_details: string | null; tags_json: string | null; submitted_at: string; last_updated: string };
+type EmailResponse = { data: EmailRow[]; total: number; limit: number; offset: number };
+type DetailResponse = { data: EmailRow & { attempts: Array<{ id: string; attempt_number: number; status: string; response_code: number | null; response_text: string | null; duration_ms: number; created_at: string }>; events: Array<{ id: string; event_type: string; description: string; created_at: string }> } };
 
-const PAGE_SIZE = 12;
+const statuses = ['all', 'queued', 'processing', 'accepted', 'delivered', 'deferred', 'bounced', 'failed'];
 
 export default function EmailActivityPage() {
+  const [rows, setRows] = useState<EmailRow[]>([]);
+  const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [page, setPage] = useState(1);
-  const [selectedEmail, setSelectedEmail] = useState<EmailLog | null>(null);
+  const [status, setStatus] = useState('all');
+  const [offset, setOffset] = useState(0);
+  const [selected, setSelected] = useState<DetailResponse['data'] | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  const filtered = useMemo(() => {
-    return mockEmailLogs.filter((email) => {
-      const matchesSearch =
-        !search ||
-        email.recipient.toLowerCase().includes(search.toLowerCase()) ||
-        email.sender.toLowerCase().includes(search.toLowerCase()) ||
-        email.subject.toLowerCase().includes(search.toLowerCase()) ||
-        email.messageId.toLowerCase().includes(search.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || email.status === statusFilter;
-      return matchesSearch && matchesStatus;
-    });
-  }, [search, statusFilter]);
+  async function load() {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ limit: '25', offset: String(offset) });
+      if (status !== 'all') params.set('status', status);
+      if (search.trim()) params.set('search', search.trim());
+      const result = await apiRequest<EmailResponse>(`/v1/emails?${params.toString()}`);
+      setRows(result.data);
+      setTotal(result.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load email activity.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  useEffect(() => { void load(); }, [offset, status]);
+  useEffect(() => { const timer = window.setTimeout(() => { setOffset(0); void load(); }, 250); return () => window.clearTimeout(timer); }, [search]);
 
-  const columns = [
-    {
-      key: 'messageId',
-      header: 'Message ID',
-      render: (row: EmailLog) => (
-        <span className="font-mono text-xs text-muted-foreground">{row.messageId.slice(0, 20)}...</span>
-      ),
-    },
-    {
-      key: 'recipient',
-      header: 'Recipient',
-      render: (row: EmailLog) => (
-        <span className="text-sm text-foreground truncate">{row.recipient}</span>
-      ),
-    },
-    {
-      key: 'sender',
-      header: 'Sender',
-      render: (row: EmailLog) => (
-        <span className="text-sm text-muted-foreground truncate">{row.sender}</span>
-      ),
-    },
-    {
-      key: 'subject',
-      header: 'Subject',
-      render: (row: EmailLog) => (
-        <span className="text-sm text-foreground truncate max-w-[200px] block">{row.subject}</span>
-      ),
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      render: (row: EmailLog) => <StatusBadge status={row.status} />,
-    },
-    {
-      key: 'submittedAt',
-      header: 'Submitted',
-      render: (row: EmailLog) => (
-        <span className="text-xs text-muted-foreground">{formatRelativeTime(row.submittedAt)}</span>
-      ),
-    },
-    {
-      key: 'lastUpdated',
-      header: 'Updated',
-      render: (row: EmailLog) => (
-        <span className="text-xs text-muted-foreground">{formatRelativeTime(row.lastUpdated)}</span>
-      ),
-    },
-  ];
+  async function showDetails(id: string) {
+    setError('');
+    try {
+      const result = await apiRequest<DetailResponse>(`/v1/emails/${id}`);
+      setSelected(result.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load message details.');
+    }
+  }
 
   return (
     <div>
-      <PageHeader
-        title="Email Activity"
-        description="Search and filter your email delivery log. Click any message for full delivery details."
-        action={<DateRangeFilter />}
-      />
-      <MockDataBanner />
-
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search by recipient, sender, subject, or message ID..."
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            className="pl-9"
-          />
+      <PageHeader title="Email Activity" description="Live message logs, SMTP responses, and delivery attempts from your workspace." action={<Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>} />
+      {error && <p role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+      <Card className="p-4">
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><input aria-label="Search email activity" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search recipient, sender, or subject…" className="w-full rounded-md border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:border-primary" /></div>
+          <select aria-label="Filter by status" value={status} onChange={(event) => { setStatus(event.target.value); setOffset(0); }} className="rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary">{statuses.map((item) => <option key={item} value={item}>{item === 'all' ? 'All statuses' : item.charAt(0).toUpperCase() + item.slice(1)}</option>)}</select>
         </div>
-        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
-          <SelectTrigger className="w-[160px]">
-            <Filter className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {statusFilters.map((s) => (
-              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left">
+            <thead><tr className="border-b border-border text-xs text-muted-foreground"><th className="px-3 py-3 font-medium">Recipient / Subject</th><th className="px-3 py-3 font-medium">Sender</th><th className="px-3 py-3 font-medium">Status</th><th className="px-3 py-3 font-medium">SMTP</th><th className="px-3 py-3 font-medium">Submitted</th><th className="px-3 py-3 font-medium"></th></tr></thead>
+            <tbody>
+              {loading ? <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-muted-foreground">Loading email logs…</td></tr> :
+                rows.length === 0 ? <tr><td colSpan={6} className="px-3 py-10 text-center"><Activity className="mx-auto h-7 w-7 text-muted-foreground" /><p className="mt-2 text-sm text-muted-foreground">No matching emails yet.</p></td></tr> :
+                rows.map((row) => <tr key={row.id} className="border-b border-border/70 last:border-0"><td className="max-w-[280px] px-3 py-3"><p className="truncate text-sm font-medium text-foreground">{row.recipient}</p><p className="mt-1 truncate text-xs text-muted-foreground">{row.subject || '(no subject)'}</p></td><td className="px-3 py-3 text-sm text-muted-foreground">{row.sender}</td><td className="px-3 py-3"><StatusBadge status={row.status as never} /></td><td className="px-3 py-3 text-xs text-muted-foreground">{row.smtp_code ?? '—'}</td><td className="px-3 py-3 text-xs text-muted-foreground" title={formatDateTime(row.submitted_at)}>{formatRelativeTime(row.submitted_at)}</td><td className="px-3 py-3"><Button size="sm" variant="outline" onClick={() => void showDetails(row.id)}>Details</Button></td></tr>)}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground"><span>{total === 0 ? '0 messages' : `${offset + 1}–${Math.min(offset + rows.length, total)} of ${total} messages`}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - 25))}>Previous</Button><Button size="sm" variant="outline" disabled={offset + rows.length >= total || loading} onClick={() => setOffset(offset + 25)}>Next</Button></div></div>
+      </Card>
 
-      <DataTable
-        columns={columns}
-        data={paginated}
-        onRowClick={setSelectedEmail}
-        emptyState={
-          <EmptyState
-            icon={Mail}
-            title="No emails found"
-            description="Try adjusting your search or filters to see email activity."
-          />
-        }
-        pagination={{
-          page,
-          pageSize: PAGE_SIZE,
-          total: filtered.length,
-          onPageChange: setPage,
-        }}
-      />
-
-      <Sheet open={!!selectedEmail} onOpenChange={(open) => !open && setSelectedEmail(null)}>
-        <SheetContent side="right" className="w-full overflow-y-auto scrollbar-thin sm:max-w-2xl">
-          {selectedEmail && (
-            <>
-              <SheetHeader>
-                <SheetTitle className="text-lg">Email Details</SheetTitle>
-                <SheetDescription>
-                  Message ID: <span className="font-mono text-xs">{selectedEmail.messageId}</span>
-                </SheetDescription>
-              </SheetHeader>
-
-              <div className="mt-6 space-y-6">
-                <div className="flex items-center justify-between">
-                  <StatusBadge status={selectedEmail.status} />
-                  <span className="text-xs text-muted-foreground">
-                    Submitted {formatRelativeTime(selectedEmail.submittedAt)}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">From</p>
-                    <p className="mt-1 text-sm text-foreground">{selectedEmail.sender}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">To</p>
-                    <p className="mt-1 text-sm text-foreground">{selectedEmail.recipient}</p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Subject</p>
-                    <p className="mt-1 text-sm text-foreground">{selectedEmail.subject}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Domain</p>
-                    <p className="mt-1 text-sm text-foreground">{selectedEmail.domain}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Tags</p>
-                    <div className="mt-1 flex gap-1.5">
-                      {selectedEmail.tags?.map((tag) => (
-                        <span key={tag} className="rounded bg-secondary px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {selectedEmail.smtpCode && (
-                  <Card className="p-4">
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">SMTP Response</p>
-                    <div className="mt-2 flex items-start gap-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-mono font-medium ${
-                        selectedEmail.smtpCode >= 200 && selectedEmail.smtpCode < 300
-                          ? 'bg-success/10 text-success'
-                          : selectedEmail.smtpCode >= 400 && selectedEmail.smtpCode < 500
-                          ? 'bg-warning/10 text-warning'
-                          : selectedEmail.smtpCode >= 500
-                          ? 'bg-destructive/10 text-destructive'
-                          : 'bg-secondary text-muted-foreground'
-                      }`}>
-                        {selectedEmail.smtpCode}
-                      </span>
-                      <span className="font-mono text-xs text-foreground/90">{selectedEmail.smtpResponse}</span>
-                    </div>
-                  </Card>
-                )}
-
-                {selectedEmail.errorDetails && (
-                  <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-4">
-                    <p className="text-xs font-medium uppercase tracking-wider text-destructive">Error Details</p>
-                    <p className="mt-1.5 text-sm text-foreground/90">{selectedEmail.errorDetails}</p>
-                  </div>
-                )}
-
-                <div>
-                  <h4 className="mb-3 text-sm font-semibold text-foreground">Delivery Attempts</h4>
-                  <div className="space-y-2">
-                    {selectedEmail.attempts.map((attempt) => (
-                      <div key={attempt.id} className="flex items-center gap-3 rounded-lg border border-border bg-secondary/20 p-3">
-                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium text-muted-foreground">
-                          {attempt.attemptNumber}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <StatusBadge status={attempt.status} />
-                            <span className="text-xs text-muted-foreground">{formatDateTime(attempt.timestamp)}</span>
-                          </div>
-                          <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                            {attempt.smtpCode} · {attempt.smtpResponse}
-                          </p>
-                        </div>
-                        <span className="text-xs text-muted-foreground tabular-nums">{attempt.durationMs}ms</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="mb-3 text-sm font-semibold text-foreground">Event History</h4>
-                  <div className="space-y-2">
-                    {selectedEmail.events.map((event) => (
-                      <div key={event.id} className="flex items-start gap-3">
-                        <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                        <div className="flex-1">
-                          <p className="text-sm text-foreground">{event.description}</p>
-                          <p className="text-xs text-muted-foreground">
-                            <span className="font-mono">{event.type}</span> · {formatTime(event.timestamp)}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
+      {selected && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="email-detail-title" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-2xl">
+          <div className="flex items-start justify-between gap-4"><div><h2 id="email-detail-title" className="text-lg font-semibold text-foreground">Message details</h2><p className="mt-1 break-all text-xs text-muted-foreground">{selected.id}</p></div><Button variant="outline" size="sm" onClick={() => setSelected(null)}>Close</Button></div>
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2"><div><p className="text-xs text-muted-foreground">Recipient</p><p className="mt-1 break-all text-sm text-foreground">{selected.recipient}</p></div><div><p className="text-xs text-muted-foreground">Sender</p><p className="mt-1 break-all text-sm text-foreground">{selected.sender}</p></div><div><p className="text-xs text-muted-foreground">Subject</p><p className="mt-1 text-sm text-foreground">{selected.subject || '(no subject)'}</p></div><div><p className="text-xs text-muted-foreground">Status</p><div className="mt-1"><StatusBadge status={selected.status as never} /></div></div></div>
+          {(selected.error_details || selected.smtp_response) && <div className="mt-4 rounded-lg border border-border bg-background p-3"><p className="text-xs font-medium text-foreground">Last SMTP response / error</p><p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{selected.error_details || selected.smtp_response}</p></div>}
+          <h3 className="mt-5 text-sm font-semibold text-foreground">Delivery attempts ({selected.attempts.length})</h3>
+          <div className="mt-2 space-y-2">{selected.attempts.length === 0 ? <p className="text-xs text-muted-foreground">No delivery attempts recorded yet.</p> : selected.attempts.map((attempt) => <div key={attempt.id} className="rounded-lg border border-border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium text-foreground">Attempt {attempt.attempt_number}</span><span className="text-xs text-muted-foreground">{attempt.response_code ?? 'No SMTP code'} · {attempt.duration_ms} ms · {formatRelativeTime(attempt.created_at)}</span></div><p className="mt-1 break-words text-xs text-muted-foreground">{attempt.response_text || attempt.status}</p></div>)}</div>
+          <h3 className="mt-5 text-sm font-semibold text-foreground">Events</h3>
+          <div className="mt-2 space-y-2">{selected.events.map((event) => <div key={event.id} className="flex justify-between gap-4 rounded-lg border border-border p-3"><div><p className="text-xs font-medium text-foreground">{event.event_type}</p><p className="mt-1 text-xs text-muted-foreground">{event.description}</p></div><time className="shrink-0 text-xs text-muted-foreground">{formatRelativeTime(event.created_at)}</time></div>)}</div>
+        </section>
+      </div>}
     </div>
   );
 }
