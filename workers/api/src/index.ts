@@ -10,8 +10,18 @@ export interface Env {
   SMTP_USERNAME?: string;
   SMTP_PASSWORD?: string;
   SMTP_TEST_TOKEN?: string;
+  SMTP_CREDENTIALS_KEY?: string;
   REGISTRATION_ENABLED?: string;
 }
+
+type WorkspaceSmtpConfig = {
+  host: string;
+  port: number;
+  security: "tls" | "starttls";
+  username: string;
+  encrypted_password: string;
+  sender_email: string;
+};
 
 type ApiKeyRow = {
   id: string;
@@ -57,6 +67,52 @@ function validEmail(value: string): boolean {
 
 function emailDomain(value: string): string {
   return normalizeEmail(value).split("@")[1] ?? "";
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function decodeBase64(value: string): Uint8Array {
+  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+}
+
+async function credentialCryptoKey(env: Env): Promise<CryptoKey> {
+  if (!env.SMTP_CREDENTIALS_KEY) {
+    throw new Error("SMTP_CREDENTIALS_KEY is not configured.");
+  }
+  const raw = decodeBase64(env.SMTP_CREDENTIALS_KEY.trim());
+  if (raw.byteLength !== 32) {
+    throw new Error("SMTP_CREDENTIALS_KEY must be a base64-encoded 32-byte key.");
+  }
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+async function encryptSmtpPassword(env: Env, password: string): Promise<string> {
+  const key = await credentialCryptoKey(env);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(password));
+  return `${encodeBase64(iv)}.${encodeBase64(new Uint8Array(encrypted))}`;
+}
+
+async function decryptSmtpPassword(env: Env, encryptedValue: string): Promise<string> {
+  const [ivValue, cipherValue] = encryptedValue.split(".");
+  if (!ivValue || !cipherValue) throw new Error("Stored SMTP credentials are invalid.");
+  const key = await credentialCryptoKey(env);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: decodeBase64(ivValue) },
+    key,
+    decodeBase64(cipherValue),
+  );
+  return new TextDecoder().decode(decrypted);
+}
+
+async function getWorkspaceSmtpConfig(env: Env, workspaceId: string): Promise<WorkspaceSmtpConfig | null> {
+  return env.DB.prepare(
+    "SELECT host, port, security, username, encrypted_password, sender_email FROM workspace_smtp_configs WHERE workspace_id = ? LIMIT 1",
+  ).bind(workspaceId).first<WorkspaceSmtpConfig>();
 }
 
 async function sha256(value: string): Promise<string> {
@@ -107,7 +163,7 @@ async function handleSmtpTest(request: Request, env: Env): Promise<Response> {
     : "MailForge SMTP connection test";
 
   try {
-    const result = await sendSmtpEmail(env, {
+    const result = await sendSmtpEmail(smtpEnv, {
       from,
       to: normalizeEmail(input.to),
       subject,
@@ -188,10 +244,16 @@ async function handleSendEmail(request: Request, env: Env): Promise<Response> {
     "SELECT id FROM sending_domains WHERE workspace_id = ? AND domain = ? COLLATE NOCASE AND status = 'verified' LIMIT 1",
   ).bind(apiKey.workspace_id, domain).first<{ id: string }>();
 
-  // Until customer-managed DNS verification is available, permit only the exact
-  // sender identity configured for this SMTP account. Never permit arbitrary
-  // addresses on the provider domain.
-  const providerSender = env.SMTP_USERNAME ? normalizeEmail(env.SMTP_USERNAME) : "";
+  const workspaceSmtp = await getWorkspaceSmtpConfig(env, apiKey.workspace_id);
+  if (!workspaceSmtp) {
+    return json({
+      error: {
+        code: "smtp_not_configured",
+        message: "Connect your own SMTP provider in the MailForge dashboard before sending.",
+      },
+    }, 409);
+  }
+  const providerSender = normalizeEmail(workspaceSmtp.sender_email);
   if (!verifiedDomain && from !== providerSender) {
     return json({
       error: {
@@ -206,6 +268,14 @@ async function handleSendEmail(request: Request, env: Env): Promise<Response> {
   ).bind(apiKey.workspace_id, to).first<{ id: string }>();
   if (suppressed) {
     return json({ error: { code: "recipient_suppressed", message: "This recipient is on the workspace suppression list." } }, 422);
+  }
+
+  const monthlyUsage = await env.DB.prepare(
+    "SELECT COUNT(*) AS count FROM email_logs WHERE workspace_id = ? AND submitted_at >= ?",
+  ).bind(apiKey.workspace_id, new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()).first<{ count: number }>();
+  const freeMonthlyLimit = 10000;
+  if ((monthlyUsage?.count ?? 0) >= freeMonthlyLimit) {
+    return json({ error: { code: "free_plan_limit_reached", message: "The free beta includes up to 10,000 email submissions per workspace per calendar month." } }, 429);
   }
 
   const idempotencyKey = request.headers.get("Idempotency-Key")?.trim() || null;
@@ -283,19 +353,39 @@ async function consumeMailQueue(batch: MessageBatch<{ emailLogId: string }>, env
       continue;
     }
 
-    if (!env.SMTP_HOST || !env.SMTP_USERNAME || !env.SMTP_PASSWORD) {
-      await env.DB.prepare("UPDATE email_logs SET status = 'failed', error_details = 'SMTP is not configured', last_updated = ? WHERE id = ?")
-        .bind(new Date().toISOString(), email.id).run();
+    let workspaceSmtp: WorkspaceSmtpConfig | null = null;
+    let workspacePassword = "";
+    try {
+      workspaceSmtp = await getWorkspaceSmtpConfig(env, email.workspace_id);
+      if (workspaceSmtp) workspacePassword = await decryptSmtpPassword(env, workspaceSmtp.encrypted_password);
+    } catch {
+      workspaceSmtp = null;
+    }
+    if (!workspaceSmtp || !workspacePassword) {
+      const reason = env.SMTP_CREDENTIALS_KEY
+        ? "Customer SMTP is not configured or credentials could not be decrypted"
+        : "SMTP_CREDENTIALS_KEY is not configured";
+      await env.DB.prepare("UPDATE email_logs SET status = 'failed', error_details = ?, last_updated = ? WHERE id = ?")
+        .bind(reason, new Date().toISOString(), email.id).run();
+      await env.DB.prepare("INSERT INTO email_events (id, email_log_id, event_type, description, created_at) VALUES (?, ?, 'email.failed', ?, ?)")
+        .bind(crypto.randomUUID(), email.id, reason, new Date().toISOString()).run();
       message.ack();
       continue;
     }
 
+    const smtpEnv = {
+      SMTP_HOST: workspaceSmtp.host,
+      SMTP_PORT: String(workspaceSmtp.port),
+      SMTP_SECURITY: workspaceSmtp.security,
+      SMTP_USERNAME: workspaceSmtp.username,
+      SMTP_PASSWORD: workspacePassword,
+    };
     const started = Date.now();
     await env.DB.prepare("UPDATE email_logs SET status = 'processing', last_updated = ? WHERE id = ?")
       .bind(new Date().toISOString(), email.id).run();
 
     try {
-      const result = await sendSmtpEmail(env, {
+      const result = await sendSmtpEmail(smtpEnv, {
         from: email.sender,
         to: email.recipient,
         subject: email.subject,
@@ -507,10 +597,77 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
 
   const session = await getDashboardSession(request, env);
   if (!session) {
-    if (path === "/v1/settings" || path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path.startsWith("/v1/domains") || path.startsWith("/v1/suppressions")) {
+    if (path === "/v1/smtp-config" || path === "/v1/settings" || path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path.startsWith("/v1/domains") || path.startsWith("/v1/suppressions")) {
       return json({ error: { code: "unauthorized", message: "Sign in to access workspace data." } }, 401, { "cache-control": "no-store" });
     }
     return null;
+  }
+
+  if (method === "GET" && path === "/v1/smtp-config") {
+    const config = await getWorkspaceSmtpConfig(env, session.workspace_id);
+    return json({
+      configured: Boolean(config),
+      config: config ? {
+        host: config.host,
+        port: config.port,
+        security: config.security,
+        username: config.username,
+        senderEmail: config.sender_email,
+        passwordConfigured: true,
+      } : null,
+    }, 200, { "cache-control": "no-store" });
+  }
+
+  if (method === "PUT" && path === "/v1/smtp-config") {
+    let body: { host?: unknown; port?: unknown; security?: unknown; username?: unknown; password?: unknown; senderEmail?: unknown };
+    try { body = await request.json() as typeof body; } catch {
+      return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
+    }
+    const host = typeof body.host === "string" ? body.host.trim().toLowerCase() : "";
+    const port = typeof body.port === "number" ? body.port : Number(body.port);
+    const security = body.security;
+    const username = typeof body.username === "string" ? body.username.trim() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    const senderEmail = typeof body.senderEmail === "string" ? normalizeEmail(body.senderEmail) : "";
+    const hostValid = host.length <= 253 && /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i.test(host);
+    if (!hostValid) return json({ error: { code: "invalid_smtp_host", message: "Enter a valid SMTP hostname, such as smtp.example.com." } }, 400);
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || port === 25) {
+      return json({ error: { code: "invalid_smtp_port", message: "Use a valid SMTP port other than 25. Typical choices are 465 (TLS) or 587 (STARTTLS)." } }, 400);
+    }
+    if (security !== "tls" && security !== "starttls") {
+      return json({ error: { code: "invalid_smtp_security", message: "Security must be tls or starttls." } }, 400);
+    }
+    if (!username || username.length > 320 || /[\r\n]/.test(username)) {
+      return json({ error: { code: "invalid_smtp_username", message: "Enter a valid SMTP username." } }, 400);
+    }
+    if (!validEmail(senderEmail)) return json({ error: { code: "invalid_sender_email", message: "Enter a valid sender email address." } }, 400);
+    const existing = await getWorkspaceSmtpConfig(env, session.workspace_id);
+    if (!password && !existing) return json({ error: { code: "smtp_password_required", message: "Enter the SMTP password or app password." } }, 400);
+    if (password.length > 1000) return json({ error: { code: "invalid_smtp_password", message: "SMTP password is too long." } }, 400);
+    if (!env.SMTP_CREDENTIALS_KEY) {
+      return json({ error: { code: "encryption_not_configured", message: "SMTP credential encryption is not configured on the server. Contact the MailForge administrator." } }, 503);
+    }
+    let encryptedPassword: string;
+    try {
+      encryptedPassword = password ? await encryptSmtpPassword(env, password) : existing!.encrypted_password;
+    } catch {
+      return json({ error: { code: "credential_encryption_failed", message: "Could not securely store SMTP credentials." } }, 500);
+    }
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO workspace_smtp_configs (workspace_id, host, port, security, username, encrypted_password, sender_email, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(workspace_id) DO UPDATE SET host = excluded.host, port = excluded.port, security = excluded.security,
+         username = excluded.username, encrypted_password = excluded.encrypted_password, sender_email = excluded.sender_email, updated_at = excluded.updated_at`,
+    ).bind(session.workspace_id, host, port, security, username, encryptedPassword, senderEmail, now, now).run();
+    await env.DB.prepare("INSERT INTO audit_logs (id, workspace_id, user_id, action, resource_type, metadata_json, created_at) VALUES (?, ?, ?, 'smtp_config.updated', 'smtp_config', ?, ?)")
+      .bind(crypto.randomUUID(), session.workspace_id, session.user_id, JSON.stringify({ host, port, security, senderEmail }), now).run();
+    return json({ configured: true, config: { host, port, security, username, senderEmail, passwordConfigured: true }, message: "SMTP configuration saved. MailForge will use this account for new messages." }, 200, { "cache-control": "no-store" });
+  }
+
+  if (method === "DELETE" && path === "/v1/smtp-config") {
+    await env.DB.prepare("DELETE FROM workspace_smtp_configs WHERE workspace_id = ?").bind(session.workspace_id).run();
+    return json({ ok: true, message: "SMTP configuration removed." });
   }
 
   if (method === "GET" && path === "/v1/settings") {
@@ -745,7 +902,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
         totalSubmitted: submitted, totalDelivered: delivered, totalBounced: counts?.bounced ?? 0,
         deliveryRate: submitted ? Math.round((delivered / submitted) * 1000) / 10 : 0,
         totalDeferred: counts?.deferred ?? 0, totalFailed: counts?.failed ?? 0,
-        apiQuotaUsed: submitted, apiQuotaTotal: 3000,
+        apiQuotaUsed: submitted, apiQuotaTotal: 10000,
       },
       domains: { total: domainCounts?.total ?? 0, verified: domainCounts?.verified ?? 0 },
       recentEmails: recent.results ?? [],
