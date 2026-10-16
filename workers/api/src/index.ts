@@ -505,7 +505,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
 
   const session = await getDashboardSession(request, env);
   if (!session) {
-    if (path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path === "/v1/domains") {
+    if (path.startsWith("/v1/api-keys") || (method === "GET" && (path === "/v1/emails" || path.startsWith("/v1/emails/"))) || path === "/v1/overview" || path.startsWith("/v1/domains")) {
       return json({ error: { code: "unauthorized", message: "Sign in to access workspace data." } }, 401, { "cache-control": "no-store" });
     }
     return null;
@@ -578,8 +578,52 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     return json({ data: { ...email, attempts: attempts.results ?? [], events: events.results ?? [] } }, 200, { "cache-control": "no-store" });
   }
 
+  if (method === "POST" && path === "/v1/domains") {
+    let body: { domain?: unknown };
+    try { body = await request.json() as typeof body; } catch {
+      return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
+    }
+    const domain = typeof body.domain === "string" ? body.domain.trim().toLowerCase().replace(/\\.$/, "") : "";
+    const domainPattern = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$/;
+    if (!domainPattern.test(domain)) return json({ error: { code: "invalid_domain", message: "Enter a valid domain name, such as example.com." } }, 400);
+    const existing = await env.DB.prepare("SELECT id FROM sending_domains WHERE workspace_id = ? AND domain = ? COLLATE NOCASE LIMIT 1")
+      .bind(session.workspace_id, domain).first<{ id: string }>();
+    if (existing) return json({ error: { code: "domain_exists", message: "This domain is already connected to your workspace." } }, 409);
+    const id = crypto.randomUUID();
+    const token = randomToken(18);
+    const now = new Date().toISOString();
+    await env.DB.prepare("INSERT INTO sending_domains (id, workspace_id, domain, status, verification_token, created_at) VALUES (?, ?, ?, 'pending', ?, ?)")
+      .bind(id, session.workspace_id, domain, token, now).run();
+    return json({ data: { id, domain, status: "pending", verification_token: token, created_at: now, verificationRecord: { type: "TXT", name: `_mailforge-verification.${domain}`, value: `mailforge-verification=${token}` } } }, 201, { "cache-control": "no-store" });
+  }
+
+  const verifyDomainMatch = path.match(/^\\/v1\\/domains\\/([a-f0-9-]+)\\/verify$/i);
+  if (method === "POST" && verifyDomainMatch) {
+    const domain = await env.DB.prepare("SELECT id, domain, verification_token, status FROM sending_domains WHERE id = ? AND workspace_id = ? LIMIT 1")
+      .bind(verifyDomainMatch[1], session.workspace_id).first<{ id: string; domain: string; verification_token: string; status: string }>();
+    if (!domain) return json({ error: { code: "not_found", message: "Domain not found." } }, 404);
+    try {
+      const dnsUrl = new URL("https://cloudflare-dns.com/dns-query");
+      dnsUrl.searchParams.set("name", `_mailforge-verification.${domain.domain}`);
+      dnsUrl.searchParams.set("type", "TXT");
+      const dnsResponse = await fetch(dnsUrl, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000) });
+      if (!dnsResponse.ok) throw new Error("DNS lookup failed");
+      const dns = await dnsResponse.json() as { Answer?: Array<{ data?: string }> };
+      const expected = `mailforge-verification=${domain.verification_token}`;
+      const found = (dns.Answer ?? []).some((answer) => (answer.data ?? "").replace(/(^"|"$)/g, "").includes(expected));
+      if (!found) return json({ error: { code: "verification_pending", message: "The verification TXT record was not found yet. DNS changes can take time to propagate." } }, 422);
+      const now = new Date().toISOString();
+      await env.DB.prepare("UPDATE sending_domains SET status = 'verified', verified_at = ? WHERE id = ? AND workspace_id = ?")
+        .bind(now, domain.id, session.workspace_id).run();
+      return json({ data: { id: domain.id, domain: domain.domain, status: "verified", verified_at: now }, message: "Domain ownership verified. Ensure your SMTP provider also authorizes this sender domain and its SPF/DKIM records." });
+    } catch (error) {
+      if (error instanceof Error && error.message === "DNS lookup failed") return json({ error: { code: "dns_unavailable", message: "DNS verification is temporarily unavailable. Try again shortly." } }, 502);
+      return json({ error: { code: "dns_unavailable", message: "Could not check DNS right now. Try again shortly." } }, 502);
+    }
+  }
+
   if (method === "GET" && path === "/v1/domains") {
-    const result = await env.DB.prepare("SELECT id, domain, status, spf_verified, dkim_verified, dmarc_verified, verified_at, created_at FROM sending_domains WHERE workspace_id = ? ORDER BY created_at DESC")
+    const result = await env.DB.prepare("SELECT id, domain, status, verification_token, spf_verified, dkim_verified, dmarc_verified, verified_at, created_at FROM sending_domains WHERE workspace_id = ? ORDER BY created_at DESC")
       .bind(session.workspace_id).all();
     return json({ data: result.results ?? [] }, 200, { "cache-control": "no-store" });
   }
