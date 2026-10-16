@@ -149,6 +149,10 @@ async function handleSendEmail(request: Request, env: Env): Promise<Response> {
     return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
   }
 
+  if (!input || typeof input !== "object") {
+    return json({ error: { code: "invalid_request", message: "Request body must be a JSON object." } }, 400);
+  }
+
   if (
     typeof input.from !== "string" ||
     typeof input.to !== "string" ||
