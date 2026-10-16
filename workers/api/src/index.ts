@@ -375,7 +375,7 @@ async function passwordHash(password: string): Promise<string> {
   const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 210000 }, material, 256);
   const digest = base64Url(new Uint8Array(bits));
-  return \`pbkdf2-sha256$210000$\${btoa(String.fromCharCode(...salt))}$\${digest}\`;
+  return `pbkdf2-sha256$210000$${btoa(String.fromCharCode(...salt))}$${digest}`;
 }
 
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
@@ -389,7 +389,7 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
 
 function cookieValue(request: Request, name: string): string | null {
   const cookie = request.headers.get("Cookie") ?? "";
-  const match = cookie.match(new RegExp(\`(?:^|;\\\\s*)\${name}=([^;]+)\`));
+  const match = cookie.match(new RegExp(`(?:^|;\\\\s*)${name}=([^;]+)`));
   return match ? decodeURIComponent(match[1]) : null;
 }
 
@@ -405,19 +405,19 @@ async function getDashboardSession(request: Request, env: Env): Promise<Dashboar
   const token = cookieValue(request, "mf_session");
   if (!token) return null;
   return env.DB.prepare(
-    \`SELECT u.id AS user_id, u.email, w.id AS workspace_id, w.name AS workspace_name
+    `SELECT u.id AS user_id, u.email, w.id AS workspace_id, w.name AS workspace_name
      FROM sessions s
      JOIN users u ON u.id = s.user_id
      JOIN workspace_members wm ON wm.user_id = u.id
      JOIN workspaces w ON w.id = wm.workspace_id
      WHERE s.token_hash = ? AND s.expires_at > ?
      ORDER BY CASE wm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END
-     LIMIT 1\`,
+     LIMIT 1`,
   ).bind(await sha256(token), new Date().toISOString()).first<DashboardSession>();
 }
 
 function sessionCookie(token: string, maxAge: number): string {
-  return \`mf_session=\${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=\${maxAge}\`;
+  return `mf_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}`;
 }
 
 function apiKeySecret(type: "test" | "live"): string {
@@ -425,7 +425,7 @@ function apiKeySecret(type: "test" | "live"): string {
   const bytes = crypto.getRandomValues(new Uint8Array(40));
   let value = "";
   for (const byte of bytes) value += chars[byte % chars.length];
-  return \`mf_\${type}_\${value}\`;
+  return `mf_${type}_${value}`;
 }
 
 async function handleDashboardApi(request: Request, env: Env): Promise<Response | null> {
@@ -555,13 +555,13 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     const clauses = ["workspace_id = ?"];
     const bindings: (string | number)[] = [session.workspace_id];
     if (status && validStatuses.has(status)) { clauses.push("status = ?"); bindings.push(status); }
-    if (search) { clauses.push("(recipient LIKE ? OR sender LIKE ? OR subject LIKE ?)"); bindings.push(\`%\${search}%\`, \`%\${search}%\`, \`%\${search}%\`); }
+    if (search) { clauses.push("(recipient LIKE ? OR sender LIKE ? OR subject LIKE ?)"); bindings.push(`%${search}%`, `%${search}%`, `%${search}%`); }
     const where = clauses.join(" AND ");
     const result = await env.DB.prepare(
-      \`SELECT id, recipient, sender, subject, status, domain, smtp_code, smtp_response, error_details, tags_json, submitted_at, last_updated
-       FROM email_logs WHERE \${where} ORDER BY submitted_at DESC LIMIT ? OFFSET ?\`,
+      `SELECT id, recipient, sender, subject, status, domain, smtp_code, smtp_response, error_details, tags_json, submitted_at, last_updated
+       FROM email_logs WHERE ${where} ORDER BY submitted_at DESC LIMIT ? OFFSET ?`,
     ).bind(...bindings, limit, offset).all();
-    const count = await env.DB.prepare(\`SELECT COUNT(*) AS total FROM email_logs WHERE \${where}\`).bind(...bindings).first<{ total: number }>();
+    const count = await env.DB.prepare(`SELECT COUNT(*) AS total FROM email_logs WHERE ${where}`).bind(...bindings).first<{ total: number }>();
     return json({ data: result.results ?? [], total: count?.total ?? 0, limit, offset }, 200, { "cache-control": "no-store" });
   }
 
@@ -664,12 +664,12 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
 
   if (method === "GET" && path === "/v1/overview") {
     const counts = await env.DB.prepare(
-      \`SELECT COUNT(*) AS submitted,
+      `SELECT COUNT(*) AS submitted,
         SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered,
         SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) AS bounced,
         SUM(CASE WHEN status = 'deferred' THEN 1 ELSE 0 END) AS deferred,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
-       FROM email_logs WHERE workspace_id = ?\`,
+       FROM email_logs WHERE workspace_id = ?`,
     ).bind(session.workspace_id).first<Record<string, number>>();
     const [recent, domainCounts] = await Promise.all([
       env.DB.prepare("SELECT id, recipient, sender, subject, status, submitted_at, last_updated, domain, smtp_code, error_details FROM email_logs WHERE workspace_id = ? ORDER BY submitted_at DESC LIMIT 6").bind(session.workspace_id).all(),
