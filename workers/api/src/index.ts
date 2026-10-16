@@ -9,6 +9,7 @@ export interface Env {
   SMTP_SECURITY?: "tls" | "starttls";
   SMTP_USERNAME?: string;
   SMTP_PASSWORD?: string;
+  SMTP_TEST_TOKEN?: string;
 }
 
 type ApiKeyRow = {
@@ -71,6 +72,64 @@ async function authenticateApiKey(request: Request, env: Env): Promise<ApiKeyRow
   return env.DB.prepare(
     "SELECT id, workspace_id, key_type FROM api_keys WHERE key_hash = ? AND revoked = 0 LIMIT 1",
   ).bind(keyHash).first<ApiKeyRow>();
+}
+
+async function handleSmtpTest(request: Request, env: Env): Promise<Response> {
+  if (!env.SMTP_TEST_TOKEN) {
+    return json({ error: { code: "not_configured", message: "SMTP test endpoint is disabled until SMTP_TEST_TOKEN is configured." } }, 404);
+  }
+
+  const authorization = request.headers.get("Authorization") ?? "";
+  if (authorization !== `Bearer ${env.SMTP_TEST_TOKEN}`) {
+    return json({ error: { code: "unauthorized", message: "A valid SMTP test token is required." } }, 401);
+  }
+
+  if (!env.SMTP_HOST || !env.SMTP_USERNAME || !env.SMTP_PASSWORD) {
+    return json({ error: { code: "smtp_not_configured", message: "SMTP credentials are not fully configured." } }, 503);
+  }
+
+  let input: { to?: unknown; subject?: unknown };
+  try {
+    input = await request.json() as { to?: unknown; subject?: unknown };
+  } catch {
+    return json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } }, 400);
+  }
+
+  if (typeof input.to !== "string" || !validEmail(input.to)) {
+    return json({ error: { code: "invalid_recipient", message: "Provide a valid recipient email in the to field." } }, 400);
+  }
+
+  const from = normalizeEmail(env.SMTP_USERNAME);
+  const subject = typeof input.subject === "string" && input.subject.trim()
+    ? input.subject.trim().slice(0, 200)
+    : "MailForge SMTP connection test";
+
+  try {
+    const result = await sendSmtpEmail(env, {
+      from,
+      to: normalizeEmail(input.to),
+      subject,
+      text: "This is a test message sent by MailForge to verify the configured SMTP connection.",
+      html: null,
+    });
+    return json({
+      status: "accepted_by_smtp",
+      from,
+      to: normalizeEmail(input.to),
+      smtpCode: result.code,
+      message: "The SMTP server accepted the test message. This does not guarantee inbox delivery.",
+    }, 200);
+  } catch (error) {
+    const smtpError = error instanceof SmtpDeliveryError ? error : null;
+    return json({
+      error: {
+        code: "smtp_test_failed",
+        message: (smtpError?.message ?? "SMTP test failed").slice(0, 500),
+        smtpCode: smtpError?.code ?? 0,
+        retryable: smtpError?.retryable ?? true,
+      },
+    }, 502);
+  }
 }
 
 async function handleSendEmail(request: Request, env: Env): Promise<Response> {
@@ -279,6 +338,13 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
       return json({ service: "mailforge-api", status: "ok" }, 200, cors);
+    }
+
+    if (request.method === "POST" && url.pathname === "/internal/smtp-test") {
+      const response = await handleSmtpTest(request, env);
+      const headers = new Headers(response.headers);
+      new Headers(cors).forEach((value, key) => headers.set(key, value));
+      return new Response(response.body, { status: response.status, headers });
     }
 
     if (request.method === "POST" && url.pathname === "/v1/emails") {
