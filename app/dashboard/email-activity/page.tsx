@@ -69,7 +69,8 @@ export default function EmailActivityPage() {
   const [selected, setSelected] = useState<DetailResponse['data'] | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);\n  const [previewMode, setPreviewMode] = useState<'rendered' | 'text'>('rendered');
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'rendered' | 'text'>('rendered');
 
   async function load() {
     setLoading(true);
