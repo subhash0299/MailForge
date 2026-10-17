@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useState } from 'react';
-import { CheckCircle2, Copy, Globe, Plus, RefreshCw, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Copy, Globe, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -58,6 +58,21 @@ export default function DomainsPage() {
     setNotice('Copied to clipboard.');
   }
 
+  async function deleteDomain(item: DomainRow) {
+    const confirmed = window.confirm(
+      `Delete ${item.domain} from MailForge? Sending with this domain will stop until you add and verify it again. Existing email activity will be kept. You may also need to remove its DNS records manually.`,
+    );
+    if (!confirmed) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await apiRequest(`/v1/domains/${item.id}`, { method: 'DELETE' });
+      setDomains((current) => current.filter((domainItem) => domainItem.id !== item.id));
+      setNotice(`${item.domain} was deleted from MailForge.`);
+      setNewRecord(null);
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not delete domain.'); }
+    finally { setBusy(false); }
+  }
+
   return (
     <div>
       <PageHeader title="Sending Domains" description="Connect a domain and prove ownership before using it as a sender." />
@@ -85,7 +100,7 @@ export default function DomainsPage() {
       <div className="mt-6">
         <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-foreground">Connected domains ({domains.length})</h2><Button size="sm" variant="outline" onClick={() => void loadDomains()}><RefreshCw className="mr-2 h-3.5 w-3.5" />Refresh</Button></div>
         {domains.length === 0 ? <Card className="flex flex-col items-center p-10 text-center"><Globe className="h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium text-foreground">No domains connected</p><p className="mt-1 text-xs text-muted-foreground">Add a domain above to start ownership verification.</p></Card> :
-          <div className="space-y-3">{domains.map((item) => <Card key={item.id} className="p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Globe className="h-4 w-4 text-muted-foreground" /><span className="break-all text-sm font-medium text-foreground">{item.domain}</span><StatusBadge status={item.status as never} type="domain" /></div><p className="mt-1 text-xs text-muted-foreground">Added {formatDate(item.created_at)}{item.verified_at ? ` · Verified ${formatDate(item.verified_at)}` : ' · Ownership not verified'}</p></div>{item.status !== 'verified' && <Button size="sm" disabled={busy} onClick={() => void verifyDomain(item)}><CheckCircle2 className="mr-2 h-4 w-4" />Verify ownership</Button>}</div>{item.status !== 'verified' && <div className="mt-4 rounded-lg border border-border bg-background p-3"><p className="text-xs font-medium text-foreground">Required ownership TXT record</p><p className="mt-2 break-all font-mono text-xs text-muted-foreground">Name: _mailforge-verification.{item.domain}</p><p className="mt-2 break-all font-mono text-xs text-muted-foreground">Value: mailforge-verification={item.verification_token}</p><div className="mt-2 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void copy(`_mailforge-verification.${item.domain}`)}><Copy className="mr-2 h-3.5 w-3.5" />Copy name</Button><Button size="sm" variant="outline" onClick={() => void copy(`mailforge-verification=${item.verification_token}`)}><Copy className="mr-2 h-3.5 w-3.5" />Copy value</Button></div></div>}<p className="mt-3 text-xs text-muted-foreground">Ownership TXT verification proves domain control. Your SMTP provider must separately authorize this sender domain and configure its required SPF/DKIM records before delivery will succeed.</p></Card>)}</div>}
+          <div className="space-y-3">{domains.map((item) => <Card key={item.id} className="p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Globe className="h-4 w-4 text-muted-foreground" /><span className="break-all text-sm font-medium text-foreground">{item.domain}</span><StatusBadge status={item.status as never} type="domain" /></div><p className="mt-1 text-xs text-muted-foreground">Added {formatDate(item.created_at)}{item.verified_at ? ` · Verified ${formatDate(item.verified_at)}` : ' · Ownership not verified'}</p></div><div className="flex flex-wrap gap-2">{item.status !== 'verified' && <Button size="sm" disabled={busy} onClick={() => void verifyDomain(item)}><CheckCircle2 className="mr-2 h-4 w-4" />Verify ownership</Button>}<Button size="sm" variant="outline" disabled={busy} onClick={() => void deleteDomain(item)}><Trash2 className="mr-2 h-4 w-4" />Delete</Button></div></div>{item.status !== 'verified' && <div className="mt-4 rounded-lg border border-border bg-background p-3"><p className="text-xs font-medium text-foreground">Required ownership TXT record</p><p className="mt-2 break-all font-mono text-xs text-muted-foreground">Name: _mailforge-verification.{item.domain}</p><p className="mt-2 break-all font-mono text-xs text-muted-foreground">Value: mailforge-verification={item.verification_token}</p><div className="mt-2 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => void copy(`_mailforge-verification.${item.domain}`)}><Copy className="mr-2 h-3.5 w-3.5" />Copy name</Button><Button size="sm" variant="outline" onClick={() => void copy(`mailforge-verification=${item.verification_token}`)}><Copy className="mr-2 h-3.5 w-3.5" />Copy value</Button></div></div>}<p className="mt-3 text-xs text-muted-foreground">Ownership TXT verification proves domain control. Your SMTP provider must separately authorize this sender domain and configure its required SPF/DKIM records before delivery will succeed.</p></Card>)}</div>}
       </div>
     </div>
   );
