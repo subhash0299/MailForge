@@ -31,7 +31,7 @@ type ApiKeyRow = {
 };
 
 type SendEmailInput = {
-  from: string;
+  from?: string;
   to: string;
   subject: string;
   text?: string;
@@ -215,7 +215,7 @@ async function handleSendEmail(request: Request, env: Env): Promise<Response> {
   }
 
   if (
-    typeof input.from !== "string" ||
+    (input.from !== undefined && typeof input.from !== "string") ||
     typeof input.to !== "string" ||
     typeof input.subject !== "string" ||
     (!input.text && !input.html)
@@ -223,15 +223,14 @@ async function handleSendEmail(request: Request, env: Env): Promise<Response> {
     return json({
       error: {
         code: "invalid_request",
-        message: "Required fields: from, to, subject, and at least one of text or html.",
+        message: "Required fields: to, subject, and at least one of text or html. The from field defaults to your configured SMTP sender.",
       },
     }, 400);
   }
 
-  const from = normalizeEmail(input.from);
   const to = normalizeEmail(input.to);
-  if (!validEmail(from) || !validEmail(to)) {
-    return json({ error: { code: "invalid_email", message: "The from and to fields must be valid email addresses." } }, 400);
+  if (!validEmail(to)) {
+    return json({ error: { code: "invalid_email", message: "The to field must be a valid email address." } }, 400);
   }
   if (input.subject.length > 998 || input.subject.trim().length === 0) {
     return json({ error: { code: "invalid_subject", message: "Subject must be non-empty and no longer than 998 characters." } }, 400);
@@ -243,11 +242,6 @@ async function handleSendEmail(request: Request, env: Env): Promise<Response> {
     return json({ error: { code: "invalid_tags", message: "Tags must be an array of up to 20 strings, each no longer than 100 characters." } }, 400);
   }
 
-  const domain = emailDomain(from);
-  const verifiedDomain = await env.DB.prepare(
-    "SELECT id FROM sending_domains WHERE workspace_id = ? AND domain = ? COLLATE NOCASE AND status = 'verified' LIMIT 1",
-  ).bind(apiKey.workspace_id, domain).first<{ id: string }>();
-
   const workspaceSmtp = await getWorkspaceSmtpConfig(env, apiKey.workspace_id);
   if (!workspaceSmtp) {
     return json({
@@ -257,6 +251,21 @@ async function handleSendEmail(request: Request, env: Env): Promise<Response> {
       },
     }, 409);
   }
+
+  const from = normalizeEmail(
+    typeof input.from === "string" && input.from.trim()
+      ? input.from
+      : workspaceSmtp.sender_email,
+  );
+  if (!validEmail(from)) {
+    return json({ error: { code: "invalid_email", message: "The configured sender and recipient must be valid email addresses." } }, 400);
+  }
+
+  const domain = emailDomain(from);
+  const verifiedDomain = await env.DB.prepare(
+    "SELECT id FROM sending_domains WHERE workspace_id = ? AND domain = ? COLLATE NOCASE AND status = 'verified' LIMIT 1",
+  ).bind(apiKey.workspace_id, domain).first<{ id: string }>();
+
   const providerSender = normalizeEmail(workspaceSmtp.sender_email);
   if (!verifiedDomain && from !== providerSender) {
     return json({
