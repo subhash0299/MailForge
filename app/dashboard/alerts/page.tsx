@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, BellRing, CheckCircle2, Clock3, Globe, Mail, RefreshCw, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, BellRing, CheckCircle2, Clock3, Globe, RefreshCw, ShieldAlert } from 'lucide-react';
 import { PageHeader } from '@/components/dashboard/page-header';
-import { StatusBadge } from '@/components/dashboard/status-badge';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
