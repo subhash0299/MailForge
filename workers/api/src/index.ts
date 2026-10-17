@@ -922,7 +922,7 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     }
   }
 
-  const deleteDomainMatch = path.match(/^\\/v1\\/domains\\/([a-f0-9-]+)$/i);
+  const deleteDomainMatch = path.match(/^\/v1\/domains\/([a-f0-9-]+)$/i);
   if (method === "DELETE" && deleteDomainMatch) {
     const result = await env.DB.prepare("DELETE FROM sending_domains WHERE id = ? AND workspace_id = ?")
       .bind(deleteDomainMatch[1], session.workspace_id).run();
