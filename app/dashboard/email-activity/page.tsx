@@ -45,15 +45,15 @@ function createSafeEmailPreview(html: string) {
       const value = attribute.value.trim();
       if (name.startsWith('on') || ['srcdoc', 'action', 'formaction', 'xlink:href'].includes(name)) {
         element.removeAttribute(attribute.name);
-      } else if (['href', 'src', 'srcset', 'poster', 'background'].includes(name) && /^\\s*javascript:/i.test(value)) {
+      } else if (['href', 'src', 'srcset', 'poster', 'background'].includes(name) && /^\s*javascript:/i.test(value)) {
         element.removeAttribute(attribute.name);
-      } else if (name === 'style' && /expression\\s*\\(|javascript\\s*:/i.test(value)) {
+      } else if (name === 'style' && /expression\s*\(|javascript\s*:/i.test(value)) {
         element.removeAttribute(attribute.name);
       }
     });
   });
   parsed.querySelectorAll('style').forEach((node) => {
-    node.textContent = (node.textContent ?? '').replace(/@import[^;]+;?/gi, '').replace(/url\\(\\s*['"]?\\s*javascript:[^)]+\\)/gi, 'none');
+    node.textContent = (node.textContent ?? '').replace(/@import[^;]+;?/gi, '').replace(/url\(\s*['"]?\s*javascript:[^)]+\)/gi, 'none');
   });
   return parsed.body.innerHTML;
 }
@@ -119,7 +119,6 @@ export default function EmailActivityPage() {
   }
 
   const attempts = selected?.attempts ?? [];
-  const successful = selected?.status === 'accepted' || selected?.status === 'delivered';
   const hasFailure = selected ? ['failed', 'deferred', 'bounced'].includes(selected.status) : false;
   const events = [...(selected?.events ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at));
 
