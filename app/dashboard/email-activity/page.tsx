@@ -29,8 +29,8 @@ function statusExplanation(status: string) {
 }
 
 function duration(value: number) {
-  if (value < 1000) return \`\${value} ms\`;
-  return \`\${(value / 1000).toFixed(2)} sec\`;
+  if (value < 1000) return `${value} ms`;
+  return `${(value / 1000).toFixed(2)} sec`;
 }
 
 function eventLabel(type: string) {
@@ -63,7 +63,7 @@ export default function EmailActivityPage() {
       const params = new URLSearchParams({ limit: '25', offset: String(offset) });
       if (status !== 'all') params.set('status', status);
       if (search.trim()) params.set('search', search.trim());
-      const result = await apiRequest<EmailResponse>(\`/v1/emails?\${params.toString()}\`);
+      const result = await apiRequest<EmailResponse>(`/v1/emails?${params.toString()}`);
       setRows(result.data);
       setTotal(result.total);
     } catch (err) {
@@ -80,7 +80,7 @@ export default function EmailActivityPage() {
     setError('');
     setShowDiagnostics(false);
     try {
-      const result = await apiRequest<DetailResponse>(\`/v1/emails/\${id}\`);
+      const result = await apiRequest<DetailResponse>(`/v1/emails/${id}`);
       setSelected(result.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load message details.');
@@ -115,7 +115,7 @@ export default function EmailActivityPage() {
             </tbody>
           </table>
         </div>
-        <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground"><span>{total === 0 ? '0 messages' : \`\${offset + 1}–\${Math.min(offset + rows.length, total)} of \${total} messages\`}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - 25))}>Previous</Button><Button size="sm" variant="outline" disabled={offset + rows.length >= total || loading} onClick={() => setOffset(offset + 25)}>Next</Button></div></div>
+        <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground"><span>{total === 0 ? '0 messages' : `${offset + 1}–${Math.min(offset + rows.length, total)} of ${total} messages`}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - 25))}>Previous</Button><Button size="sm" variant="outline" disabled={offset + rows.length >= total || loading} onClick={() => setOffset(offset + 25)}>Next</Button></div></div>
       </Card>
 
       {selected && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}>
