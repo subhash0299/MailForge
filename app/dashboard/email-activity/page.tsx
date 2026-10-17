@@ -38,7 +38,7 @@ function createSafeEmailPreview(html: string) {
   const parsed = new DOMParser().parseFromString(html, 'text/html');
   parsed.querySelectorAll('script, iframe, frame, frameset, object, embed, form, input, button, textarea, select, option, link, meta, base, style, video, audio, source, track, svg, math').forEach((node) => node.remove());
   parsed.querySelectorAll('*').forEach((element) => {
-    [...element.attributes].forEach((attribute) => {
+    Array.from(element.attributes).forEach((attribute) => {
       const name = attribute.name.toLowerCase();
       if (name.startsWith('on') || ['style', 'src', 'srcset', 'href', 'xlink:href', 'action', 'formaction', 'poster', 'background', 'srcdoc'].includes(name)) {
         element.removeAttribute(attribute.name);
