@@ -73,6 +73,7 @@ export default function EmailActivityPage() {
     }
   }
 
+  useEffect(() => { const initialStatus = new URLSearchParams(window.location.search).get('status'); if (initialStatus && statuses.includes(initialStatus)) { setStatus(initialStatus); setOffset(0); } }, []);
   useEffect(() => { void load(); }, [offset, status]);
   useEffect(() => { const timer = window.setTimeout(() => { setOffset(0); void load(); }, 250); return () => window.clearTimeout(timer); }, [search]);
 
