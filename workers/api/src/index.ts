@@ -922,6 +922,14 @@ async function handleDashboardApi(request: Request, env: Env): Promise<Response 
     }
   }
 
+  const deleteDomainMatch = path.match(/^\\/v1\\/domains\\/([a-f0-9-]+)$/i);
+  if (method === "DELETE" && deleteDomainMatch) {
+    const result = await env.DB.prepare("DELETE FROM sending_domains WHERE id = ? AND workspace_id = ?")
+      .bind(deleteDomainMatch[1], session.workspace_id).run();
+    if (!result.meta.changes) return json({ error: { code: "not_found", message: "Domain not found." } }, 404);
+    return json({ ok: true });
+  }
+
   if (method === "GET" && path === "/v1/domains") {
     const result = await env.DB.prepare("SELECT id, domain, status, verification_token, spf_verified, dkim_verified, dmarc_verified, verified_at, created_at FROM sending_domains WHERE workspace_id = ? ORDER BY created_at DESC")
       .bind(session.workspace_id).all();
